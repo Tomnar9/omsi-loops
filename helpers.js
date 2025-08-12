@@ -62,6 +62,7 @@ function copyArray(arr) {
     return JSON.parse(JSON.stringify(arr));
 }
 
+/** @type {<T>(obj: T) => T} */
 function copyObject(obj) {
     return JSON.parse(JSON.stringify(obj));
 }
@@ -90,9 +91,11 @@ function intToStringNegative(value, amount) {
     return (isPositive === 1 ? "+" : "-") + parseFloat(value).toFixed(baseValue - 1);
 }
 
-function intToString(value, amount) {
+function intToString(value, amount, fixPrecision = false) {
+    const prefix = value < 0 ? "-" : "";
+    value = Math.abs(parseFloat(value));
     if (value >= 10000) {
-        return nFormatter(value, 3);
+        return prefix + nFormatter(value, 3, fixPrecision);
     }
     if (value >= 1000) {
         let baseValue = 3;
@@ -100,13 +103,13 @@ function intToString(value, amount) {
             baseValue = amount;
         }
         const returnVal = parseFloat(value).toFixed(baseValue - 1);
-        return `${returnVal[0]},${returnVal.substring(1)}`;
+        return `${prefix}${returnVal[0]},${returnVal.substring(1)}`;
     }
     let baseValue = 3;
     if (amount) {
         baseValue = amount;
     }
-    return parseFloat(value).toFixed(baseValue - 1);
+    return prefix + parseFloat(value).toFixed(baseValue - 1);
 }
 
 function intToStringRound(value) {
@@ -120,9 +123,45 @@ function toSuffix(value) {
     value = Math.round(value);
     const suffixes = ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "O", "N", "Dc", "Ud", "Dd", "Td", "qd", "Qd", "sd", "Sd", "Od", "Nd", "V"];
     const suffixNum = Math.floor(((String(value)).length - 1) / 3);
-    let shortValue = parseFloat((suffixNum === 0 ? value : (value / Math.pow(1000, suffixNum))).toPrecision(3));
-    if (shortValue % 1 !== 0) shortValue = shortValue.toPrecision(3);
-    return shortValue + suffixes[suffixNum];
+    const shortValue = parseFloat((suffixNum === 0 ? value : (value / Math.pow(1000, suffixNum))).toPrecision(3));
+    const valueRepr = shortValue % 1 !== 0 ? shortValue.toPrecision(3) : shortValue.toString();
+    return valueRepr + suffixes[suffixNum];
+}
+
+const Mana = {
+    /** @param {number} value @param {number} [minNonZero] */
+    ceil(value, minNonZero) {
+        return value === 0 ? 0
+                : !options.fractionalMana ? Math.ceil(value)
+                : !minNonZero ? value
+                : value > 0 ? Math.max(value, minNonZero)
+                : Math.min(value, -minNonZero);
+    },
+    
+    /** @param {number} value @param {number} [minNonZero] */
+    floor(value, minNonZero) {
+        return value === 0 ? 0
+                : !options.fractionalMana ? Math.floor(value)
+                : !minNonZero ? value
+                : value > 0 ? Math.max(value, minNonZero)
+                : Math.min(value, -minNonZero);
+    },
+    
+    /** @param {number} value @param {number} [minNonZero] */
+    round(value, minNonZero) {
+        return value === 0 ? 0
+                : !options.fractionalMana ? Math.round(value)
+                : !minNonZero ? value
+                : value > 0 ? Math.max(value, minNonZero)
+                : Math.min(value, -minNonZero);
+    },
+}
+
+/** @param {number} value @param {number} min @param {number} max */
+function clamp(value, min, max) {
+    value = Math.max(value, min ?? -Infinity);
+    value = Math.min(value, max ?? Infinity);
+    return value;
 }
 
 const si = [
@@ -150,14 +189,15 @@ const si = [
 ];
 const rx = /\.0+$|(\.[0-9]*[1-9])0+$/u;
 
-function nFormatter(num, digits) {
+function nFormatter(num, digits, fixPrecision=false) {
     for (let i = 0; i < si.length; i++) {
         // /1.000501 to handle rounding
         if ((num) >= si[i].value / 1.000501) {
-            return (num / si[i].value).toPrecision(digits).replace(rx, "$1") + si[i].symbol;
+            // not the most elegant way to implement fixPrecision but whatever
+            return (num / si[i].value).toPrecision(digits).replace(rx, fixPrecision ? "$&" : "$1") + si[i].symbol;
         }
     }
-    return num.toPrecision(digits).replace(rx, "$1");
+    return num.toPrecision(digits).replace(rx, fixPrecision ? "$&" : "$1");
 }
 
 function camelize(str) {
@@ -218,6 +258,91 @@ function addClassToDiv(div, className) {
 
 function removeClassFromDiv(div, className) {
     div.classList.remove(className);
+}
+
+const wrappedElementSymbol = Symbol("wrappedElement");
+
+/**
+ * @template {Element} [T=Element]
+ * 
+ * @param {string|Element} elementOrId 
+ * @param {(new() => T)|((new() => T)[])} [expectedClass]
+ * @param {boolean} [throwIfMissing] 
+ * @param {boolean} [warnIfMissing] 
+ * @returns {T}
+ */
+function getElement(elementOrId, expectedClass=/** @type {new()=>T} */(Element), throwIfMissing=true, warnIfMissing=true) {
+    const expectedClasses = Array.isArray(expectedClass) ? expectedClass : [expectedClass];
+    const element = typeof elementOrId === "string" ? document.getElementById(elementOrId) : elementOrId;
+    for (const expected of expectedClasses) {
+        if (element instanceof expected) return element;
+    }
+    if (element && wrappedElementSymbol in element) {
+        // last try before bailing
+        const wrappedResult = getElement(/** @type {Element}*/(element[wrappedElementSymbol]), expectedClasses, false, false);
+        if (wrappedResult) return /** @type {T} */(element); // returning the wrapper so it can intercept IDL behaviors
+    }
+    if (warnIfMissing) {
+        console.warn("Expected element missing or wrong type!", elementOrId, expectedClass, element);
+    }
+    if (throwIfMissing) {
+        throw new Error(`Expected to find element of type ${expectedClasses.map(c=>c.name).join("|")} with ${elementOrId}, instead found ${element}!`);
+    }
+    return undefined;
+}
+
+/** @param {string|Element} elementOrId  */
+function htmlElement(elementOrId, throwIfMissing=true, warnIfMissing=true) {
+    return getElement(elementOrId, HTMLElement, throwIfMissing, warnIfMissing);
+}
+
+/** @param {string|Element} elementOrId  */
+function inputElement(elementOrId, throwIfMissing=true, warnIfMissing=true) {
+    return getElement(elementOrId, HTMLInputElement, throwIfMissing, warnIfMissing);
+}
+
+/** @param {string|Element} elementOrId  */
+function textAreaElement(elementOrId, throwIfMissing=true, warnIfMissing=true) {
+    return getElement(elementOrId, HTMLTextAreaElement, throwIfMissing, warnIfMissing);
+}
+
+/** @param {string|Element} elementOrId  */
+function selectElement(elementOrId, throwIfMissing=true, warnIfMissing=true) {
+    return getElement(elementOrId, HTMLSelectElement, throwIfMissing, warnIfMissing);
+}
+
+/** @typedef {HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement} HTMLValueElement */
+/** @param {string|Element} elementOrId  */
+function valueElement(elementOrId, throwIfMissing=true, warnIfMissing=true) {
+    return getElement(elementOrId, [/** @type {new() => HTMLValueElement} */(HTMLInputElement), HTMLTextAreaElement, HTMLSelectElement], throwIfMissing, warnIfMissing);
+}
+
+/** @returns {node is HTMLValueElement} */
+function isValueElement(node) {
+    return node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement;
+}
+
+/** @param {string|Element} elementOrId  */
+function svgElement(elementOrId, throwIfMissing=true, warnIfMissing=true) {
+    return getElement(elementOrId, SVGElement, throwIfMissing, warnIfMissing);
+}
+
+/** @param {string|Element} elementOrId  */
+function templateElement(elementOrId, throwIfMissing=true, warnIfMissing=true) {
+    return getElement(elementOrId, HTMLTemplateElement, throwIfMissing, warnIfMissing);
+}
+
+/** @overload @param {string|Element} templateOrId @param {boolean} [alwaysReturnFragment] @returns {Element | DocumentFragment} */
+/** @overload @param {string|Element} templateOrId @param {true} alwaysReturnFragment @returns {DocumentFragment} */
+/** @param {string} templateOrId */
+function cloneTemplate(templateOrId, alwaysReturnFragment=false) {
+    const template = templateElement(templateOrId);
+    const fragment = /** @type {DocumentFragment} */(template.content.cloneNode(true));
+    if (!alwaysReturnFragment && fragment.childElementCount === 1) {
+        return fragment.firstElementChild;
+    } else {
+        return fragment;
+    }
 }
 
 const numbers = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split(" ");
@@ -434,8 +559,92 @@ function roughSizeOfObject(object) {
     return bytes;
 }
 
+/** @type {(object: any, strings?: (string|number)[], map?: Record<string, number>) => any} */
+function extractStrings(object, strings, map) {
+    const isToplevel = strings == undefined;
+    strings ??= [];
+    map ??= {};
+    function extract(v) {
+        if (typeof v === "string" || typeof v === "number") {
+            if (!(v in map)) {
+                map[v] = strings.length;
+                strings.push(v);
+            }
+            return map[v];
+        }
+        return extractStrings(v, strings, map);
+    }
+    if (object?.toJSON) object = object.toJSON();
+    if (Array.isArray(object)) {
+        const arr = [];
+        for (const i in object) {
+            arr[i] = extract(object[i]);
+        }
+        return isToplevel ? [strings, arr] : arr;
+    } else if (object && typeof object === "object") {
+        const exObj = {};
+        for (const prop in object) {
+            const idx = extract(prop);
+            const v = extract(object[prop]);
+            exObj[idx] = v;
+        }
+        return isToplevel ? {"": strings, ...exObj} : exObj;
+    }
+    return object;
+}
+
+/** @type {(object: any, strings?: (string|number)[]) => any} */
+function restoreStrings(object, strings) {
+    const isTopLevel = strings == undefined;
+    if (isTopLevel) {
+        if (Array.isArray(object)) {
+            [strings, object] = object;
+        } else {
+            let {"": s, ...o} = object;
+            strings = s;
+            object = o;
+        }
+    }
+    function restore(v) {
+        if (typeof v === "string") v = parseInt(v);
+        if (typeof v === "number") return strings[v];
+        return restoreStrings(v, strings);
+    }
+    if (Array.isArray(object)) {
+        const arr = [];
+        for (const i in object) {
+            arr[i] = restore(object[i]);
+        }
+        return arr;
+    } else if (object && typeof object === "object") {
+        const resObj = {};
+        for (const prop in object) {
+            const v = object[prop];
+            resObj[restore(prop)] = restore(v);
+        }
+        return resObj;
+    }
+    return object;
+}
+
+async function delay(milliseconds) {
+    await new Promise(r => setTimeout(r, milliseconds));    
+}
+
+/** @returns {Promise<DOMHighResTimeStamp>} */
+function nextAnimationFrame() {
+    /** @param {FrameRequestCallback} r */
+    return new Promise(r => requestAnimationFrame(r));
+}
+
+/** @param {IdleRequestOptions} [idleRequestOptions] @returns {Promise<IdleDeadline>} */
+function nextIdle(idleRequestOptions) {
+    return new Promise(r => requestIdleCallback(r, idleRequestOptions));
+}
+
 // modified from: https://stackoverflow.com/questions/879152/how-do-i-make-javascript-beep/13194087#13194087
 function beep(duration) {
+    // @ts-ignore
     const ctxClass = window.audioContext || window.AudioContext || window.AudioContext || window.webkitAudioContext;
     const ctx = new ctxClass();
     const osc = ctx.createOscillator();
@@ -484,16 +693,17 @@ function statistics() {
     return list;
 }
 
-function benchmark(code, iterations) {
-    // supposed to kinda account for the cost of just running the eval
-    const baseCost = iterations / 20;
-    const before = Date.now();
+const nullFunc = () => {};
+function benchmark(func, iterations, returnTimeOnly) {
+    const baseCost = (func === nullFunc && returnTimeOnly) ? 0 : benchmark(nullFunc, iterations, true);
+    const before = performance.mark("benchmark-start");
     for (let i = 0; i < iterations; i++) {
-        // eslint-disable-next-line no-eval
-        eval(code);
+        func();
     }
-    const after = Date.now();
-    return `Total cost: ${after - before - baseCost}ms\n Cost per iteration: ~${(after - before - baseCost) / iterations}ms`;
+    const after = performance.mark("benchmark-end");
+    const measure = performance.measure("benchmark", "benchmark-start", "benchmark-end");
+    if (returnTimeOnly) return (measure.duration - baseCost);
+    return `Total cost: ${measure.duration - baseCost}ms\n Cost per iteration: ~${(measure.duration - baseCost) / iterations}ms`;
 }
 
 // make a lazy getter for an object (most useful for prototypes), which executes the
@@ -516,3 +726,76 @@ function defineLazyGetter(object, name, getter) {
         configurable: true,
     });
 }
+
+/** Strongly-typed version of Object.keys */
+const typedKeys = /** @type {<K extends string|number|symbol>(object: Partial<Record<K, any>>) => K[]} */(Object.keys);
+
+/** Strongly-typed version of Object.keys */
+const typedEntries = /** @type {<K extends string|number|symbol, V>(object: Partial<Record<K, V>>) => [K, V][]} */(Object.entries);
+
+const devtoolsHeader = Symbol.for("devtoolsHeader");
+const devtoolsHasBody = Symbol.for("devtoolsHasBody");
+const devtoolsBody = Symbol.for("devtoolsBody");
+
+/**
+ * Convenience class for defining devtools formatting 
+ * @template {*} DTConfig
+ */
+class DevtoolsFormattable {
+    /** @param {DTConfig} config @returns {DTJHTML<this, DTConfig> | null} */
+    dtHeader(config) { return null; }
+    /** @param {DTConfig} config */
+    dtHasBody(config) { return false; }
+    /** @param {DTConfig} config @returns {DTJHTML<this, DTConfig> | null} */
+    dtBody(config) { return null; }
+
+    [devtoolsHeader](config) {
+        return this.dtHeader(config);
+    }
+    [devtoolsHasBody](config) {
+        return this.dtHasBody(config);
+    }
+    [devtoolsBody](config) {
+        return this.dtBody(config);
+    }
+
+    constructor() {
+        new.target.addFormatter();
+    }
+
+    /** @type {DTFormatter} */
+    static formatter = {
+        header(object, config) {
+            return object?.[devtoolsHeader]?.(config) ?? null;
+        },
+        hasBody(object, config) {
+            return object?.[devtoolsHasBody]?.(config) ?? false;
+        },
+        body(object, config) {
+            return object?.[devtoolsBody]?.(config) ?? null;
+        }
+    }
+
+    static addFormatter() {
+        self.devtoolsFormatters ??= [];
+        if (!self.devtoolsFormatters.includes(this.formatter)) {
+            self.devtoolsFormatters.push(this.formatter);
+        }
+    }
+}
+
+//Convenience class for rendering html template strings with syntax coloring
+/** @satisfies {Record<string, (strings: TemplateStringsArray, ...exprs: any[]) => any>} */
+const Raw = {
+    html(strings, ...exprs) {
+        let htmlString = String.raw(strings, ...exprs);
+        if (strings.raw[0][0] === '\n' || strings.raw[0][0] === '\r') { // if this starts with an explicit linebreak, strip early whitespace
+            htmlString = htmlString.trimStart();
+        }
+        return htmlString;
+    },
+    css(strings, ...exprs) {
+        return String.raw(strings, ...exprs);
+    },
+}
+

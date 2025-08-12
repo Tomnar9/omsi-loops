@@ -1,4 +1,4 @@
-Views.registerView("trackedResources", {
+const trackedResourcesView = Views.registerView("trackedResources", {
     selector: "#trackedResources",
     html() {
         let html = "";
@@ -8,9 +8,9 @@ Views.registerView("trackedResources", {
             const resetOnRestart = !$(resource).attr("no_reset_on_restart");
             const isHidden = $(resource).attr("initially_hidden");
             html +=
-                `<div class='showthat resource'${isHidden ? ` style='display:none' id='${$(resource).find("id").text()}Div'` : ""}>
+                `<div class='showthat resource'${isHidden ? ` style='display:none' id='${$(resource).attr("id")}Div'` : ""}>
                     <div class='bold'>${$(resource).find("title").text()}</div>
-                    ${hasCount ? `<div id='${$(resource).find("id").text()}'>0</div>` : ""}
+                    ${hasCount ? `<div id='${$(resource).attr("id")}'>0</div>` : ""}
                     <div class='showthis'>
                         ${$(resource).find("desc").text()}
                         ${resetOnRestart ? `<br>${_txt("tracked_resources>reset_on_restart_txt")}` : ""}

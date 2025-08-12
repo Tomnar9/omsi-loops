@@ -1,24 +1,75 @@
 "use strict";
-function Town(index) {
-    this.index = index;
-    this.varNames = [];
-    this.progressVars = [];
-    this.totalActionList = [];
+/**
+ * @template {string} [VN=never]
+ * @template {string} [PVN=never]
+ * @template {string} [MVN=never]
+ * @typedef {{
+ *  [K in 
+ *  `checked${VN}`
+ * |`goodTemp${VN}`
+ * |`good${VN}`
+ * |`lootFrom${VN}`
+ * |`total${VN}`
+ * |`exp${PVN}`
+ * |`total${MVN}`
+ * |`${MVN}`
+ * |`${MVN}LoopCounter`
+ *      ]?: number
+ * }} TownVarDefs
+ */
+/**
+ * @template {number} TN
+ * @typedef {TownVarDefs<
+ *          ActionVarOfTownAndType<TN,"limited">,
+ *          ActionVarOfTownAndType<TN,"progress">,
+ *          ActionVarOfTownAndType<TN,"multipart">
+ *          >} TownVars
+ */
+/**
+ * @template {number} TN
+ * @typedef {keyof TownVars<TN>} TownVarNames
+ */
+/** @template {Town<number>} T @typedef {T extends Town<infer TN> ? TN : never} NumOfTown */
+/**
+ * @template {number} TN Town number
+ */
+class Town {
+    /** @type {TN} */
+    index;
+    /** @type {string[]} */
+    allVarNames = [];
+    /** @type {string[]} */
+    varNames = [];
+    /** @type {string[]} */
+    progressVars = [];
+    /** @type {string[]} */
+    multipartVars = [];
+    /** @type {Record<string, ProgressScalingType>} */
+    progressScaling = {};
+    /** @type {AnyAction[]} */
+    totalActionList = [];
+    /** @type {Set<string>} */
+    hiddenVars = new Set();
 
-    this.unlocked = function() {
+    static {
+        Data.omitProperties(this.prototype, ["hiddenVars"]);
+    }
+
+    unlocked() {
         return townsUnlocked.includes(this.index);
     };
 
-    this.expFromLevel = function(level) {
+    expFromLevel(level) {
         return level * (level + 1) * 50;
     };
 
-    this.getLevel = function(varName) {
+    getLevel(varName) {
         if (varName === "Survey") varName = varName + "Z" + this.index;
+        if (this.progressScaling[varName] === "linear") return Math.floor(this[`exp${varName}`] / 5050);
         return Math.floor((Math.sqrt(8 * this[`exp${varName}`] / 100 + 1) - 1) / 2);
     };
 
-    this.restart = function() {
+    restart() {
         for (let i = 0; i < this.varNames.length; i++) {
             const varName = this.varNames[i];
             this[`goodTemp${varName}`] = this[`good${varName}`];
@@ -27,10 +78,10 @@ function Town(index) {
         }
     };
 
-    this.finishProgress = function(varName, expGain) {
+    finishProgress(varName, expGain) {
         // return if capped, for performance
         if (this[`exp${varName}`] === 505000) {
-            if (options.pauseOnComplete) pauseGame();
+            if (options.pauseOnComplete) pauseGame(true, "Progress complete! (Game paused)");
             else return;
         }
 
@@ -53,8 +104,10 @@ function Town(index) {
         view.requestUpdate("updateProgressAction", {name: varName, town: towns[curTown]});
     };
 
-    this.getPrcToNext = function(varName) {
+    getPrcToNext(varName) {
         const level = this.getLevel(varName);
+        if (level >= 100) return 100;
+        if (this.progressScaling[varName] === "linear") return this[`exp${varName}`] / 5050 % 1 * 100;
         const expOfCurLevel = this.expFromLevel(level);
         const curLevelProgress = this[`exp${varName}`] - expOfCurLevel;
         const nextLevelNeeds = this.expFromLevel(level + 1) - expOfCurLevel;
@@ -62,7 +115,7 @@ function Town(index) {
     };
 
     // finishes actions that have checkable aspects
-    this.finishRegular = function(varName, rewardRatio, rewardFunc) {
+    finishRegular(varName, rewardRatio, rewardFunc) {
         // error state, negative numbers.
         if (this[`total${varName}`] - this[`checked${varName}`] < 0) {
             this[`checked${varName}`] = this[`total${varName}`];
@@ -74,7 +127,7 @@ function Town(index) {
         // only checks unchecked items 
         // IF there are unchecked items 
         // AND the user has not disabled checking unchecked items OR there are no checked items left
-        const searchToggler = document.getElementById(`searchToggler${varName}`);
+        const searchToggler = inputElement(`searchToggler${varName}`, false, false);
         if (this[`total${varName}`] - this[`checked${varName}`] > 0 && ((searchToggler && !searchToggler.checked) || this[`goodTemp${varName}`] <= 0)) {
             this[`checked${varName}`]++;
             if (this[`checked${varName}`] % rewardRatio === 0) {
@@ -88,7 +141,7 @@ function Town(index) {
         view.requestUpdate("updateRegular", {name: varName, index: this.index});
     };
 
-    this.createVars = function(varName) {
+    createVars(varName) {
         if (this[`checked${varName}`] === undefined) {
             this[`checked${varName}`] = 0;
         }
@@ -106,25 +159,54 @@ function Town(index) {
         }
         if (this.varNames.indexOf(varName) === -1) {
             this.varNames.push(varName);
+            this.allVarNames.push(varName);
         }
     };
 
-    this.createProgressVars = function(varName) {
+    /** @param {ProgressScalingType} [progressScaling] */
+    createProgressVars(varName, progressScaling = "default") {
         if (this[`exp${varName}`] === undefined) {
             this[`exp${varName}`] = 0;
         }
         if (this.progressVars.indexOf(varName) === -1) {
             this.progressVars.push(varName);
+            this.allVarNames.push(varName);
+            this.progressScaling[varName] = progressScaling;
         }
     };
-    for (const action of totalActionList) {
-        if (this.index === action.townNum) {
-            this.totalActionList.push(action);
-            if (action.type === "limited") this.createVars(action.varName);
-            if (action.type === "progress") this.createProgressVars(action.varName);
-            if (action.type === "multipart") {
-                this[action.varName] = 0;
-                this[`${action.varName}LoopCounter`] = 0;
+
+    createMultipartVars(varName) {
+        this[varName] = 0;
+        this[`${varName}LoopCounter`] = 0;
+        if (!this.multipartVars.includes(varName)) {
+            this.multipartVars.push(varName);
+            this.allVarNames.push(varName);
+        }
+    }
+
+    constructor(index) {
+        this.index = index;
+        let lateGameActionCount = 0;
+        let inLateGameActions = true;
+        for (const action of totalActionList) {
+            if (this.index === action.townNum) {
+                if (inLateGameActions) {
+                    if (lateGameActions.includes(action.name)) {
+                        lateGameActionCount++;
+                    } else {
+                        inLateGameActions = false;
+                    }
+                }
+                if (!inLateGameActions && lateGameActionCount > 0 && isTravel(action.name)) {
+                    // shift late-game actions to end of action button list
+                    this.totalActionList.push(...this.totalActionList.splice(0, lateGameActionCount));
+                    lateGameActionCount = 0;
+                }
+                // @ts-ignore
+                this.totalActionList.push(action);
+                if (action.type === "limited") this.createVars(action.varName);
+                if (action.type === "progress") this.createProgressVars(action.varName, action.progressScaling);
+                if (action.type === "multipart") this.createMultipartVars(action.varName);
             }
         }
     }

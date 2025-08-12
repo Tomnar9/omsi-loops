@@ -1,4 +1,6 @@
-window.Localization = {
+// @ts-check
+
+const Localization = self["Localization"] = {
     // config
     // set to true for more console.log
     debug: false,
@@ -12,6 +14,12 @@ window.Localization = {
     // html selector of the div to put the localization menu in
     handle: "#localization_menu",
 
+    // ready detection
+    isReady: false,
+    /** @type {Promise} */
+    ready: null,
+    _resolveReady: v => {},
+
     // vars
     currentLang: null,
     libs: {},
@@ -20,6 +28,7 @@ window.Localization = {
     // ====== PUBLIC ======
     // starts up the module
     init() {
+        Localization.ready = new Promise(r => Localization._resolveReady = r);
         Localization.currentLang = Localization.getUrlVars()[Localization.getKey];
         if (typeof(Localization.currentLang) === "undefined")
             Localization.currentLang = Localization.defaultLang;
@@ -31,7 +40,13 @@ window.Localization = {
             if (typeof(callback) !== "undefined") callback.call(this);
         });
     },
+    setReady() {
+        Localization._resolveReady?.(Localization);
+        delete Localization._resolveReady;
+        Localization.isReady = true;
+    },
     // lib can be ignored to use the last used lib. returns the text for the given key
+    /** @type {(path: string, lib?: string) => string} */
     txt(path, lib) {
         // eslint-disable-next-line no-param-reassign
         if (typeof(lib) === "undefined") lib = "game";
@@ -50,6 +65,7 @@ window.Localization = {
         return txt;
     },
     // lib can be ignored to use the last used lib. returns the texts for the given key as objects
+    /** @returns {JQuery<Element>} */
     txtsObj(path, lib) {
         if (typeof(lib) === "undefined") return $(Localization.libs[Localization.lastLib]).find(path);
         return $(Localization.libs[lib]).find(path);
@@ -58,7 +74,7 @@ window.Localization = {
     localizePage(lib) {
         $(".localized").each((_index, localizedElement) => {
             $(localizedElement).html(Localization.txt($(localizedElement).data("lockey"), lib));
-        }); 
+        });
     },
 
     // ====== PRIVATE ======
@@ -80,19 +96,76 @@ window.Localization = {
     },
     getUrlVars() {
         const vars = {};
-        parts = window.location.href.replace(/[?&]+([^=&]+)=([^&]*)/giu, (_m, key, value) => {
-            vars[key] = value;
+        const _ = window.location.href.replace(/[?&]+([^=&]+)=([^&]*)/giu, (_m, key, value) => {
+            return vars[key] = value;
         });
         return vars;
     },
 };
 
-Localization.init();
 // binding the _txt function for simplier use
-window._txt = Localization.txt;
-window._txtsObj = Localization.txtsObj;
+const _txt = self["_txt"] = Localization.txt;
+const _txtsObj = self["_txtsObj"] = Localization.txtsObj;
 
-let locCheck = false;
-Localization.loadLib("fallback", () => {
-    Localization.loadLib("game", () => locCheck = true);
-});
+if (typeof window !== "undefined") {
+    Localization.init();
+
+    Localization.loadLib("fallback", () => {
+        Localization.loadLib("game", () => Localization.setReady());
+    });
+}
+
+/**
+ * Represents a localization subtree; intended as a base class for a piece of game data
+ * with associated localization
+ */
+class Localizable {
+    /** @type {JQuery<Element>} */
+    #txtsObj;
+    #rootPath;
+    #lib;
+
+    get rootPath() { return this.#rootPath; }
+    get lib() { return this.#lib; }
+    get txtsObj() {
+        return this.#txtsObj ??= _txtsObj(this.#rootPath, this.#lib);
+    }
+
+    /** @param {string} rootPath @param {string} [lib] */
+    constructor(rootPath, lib) {
+        this.#rootPath = rootPath;
+        this.#lib = lib;
+    }
+
+    /** @param {string} subPath  */
+    txt(subPath) {
+        const txt = this.txtsObj.find(subPath).text();
+        return txt !== "" ? txt : _txt(this.#rootPath + subPath, this.#lib);
+    }
+
+    /**
+     * @template {keyof this} K
+     * @template {this[K]} V
+     * @param {K} property
+     * @param {V} value
+     */
+    memoizeValue(property, value) {
+        if (Object.hasOwn(this, property)) {
+            delete this[property];
+        }
+        Object.defineProperty(this, property, {value, configurable: true});
+        return value;
+    }
+
+    /**
+     * @param {keyof this} property Property to update on this object
+     * @param {string} [subPath] Subpath of localization object, defaults to `">${`{@link property}`}"`
+     * @returns {string}
+     */
+    memoize(property, subPath) {
+        subPath ??= `>${String(property)}`;
+        const value = this.txt(subPath);
+        // @ts-ignore
+        return this.memoizeValue(property, value);
+    }
+}

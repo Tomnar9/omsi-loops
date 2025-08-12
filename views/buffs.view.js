@@ -1,15 +1,7 @@
-Views.registerView("buffsContainer", {
+const buffsView = Views.registerView("buffsContainer", {
     selector: "#buffsContainer",
     html() {
-        const fullNames = {
-            Ritual: "Dark Ritual",
-            Imbuement: "Imbue Mind",
-            Imbuement2: "Imbue Body",
-            Feast: "Great Feast",
-            Aspirant: "Aspirant",
-            Heroism: "Heroism",
-            Imbuement3: "Imbue Soul"
-        };
+        const fullNames = Buff.fullNames;
         let html = "";
         for (const buff of buffList) {
             const fullName = fullNames[buff];
@@ -35,3 +27,5 @@ Views.registerView("buffsContainer", {
         return html;
     },
 });
+//                            ${desc2 ? `<span class="localized" data-lockey="buffs>${XMLName}>desc2"></span>` : ""}
+

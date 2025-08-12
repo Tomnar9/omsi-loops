@@ -64,9 +64,15 @@ class GameKeyboard {
     }
 }
 
+// Don't bind spacebar during button focus
+Mousetrap.prototype.stopCallback = (
+    (origStopCallback) => (e, element, combo) => (origStopCallback(e, element, combo) || (element.tagName === "BUTTON" && combo === "space"))
+)(Mousetrap.prototype.stopCallback);
+
 GameKeyboard.spins = [];
 
 function executeHotkey(action) {
+    // @ts-ignore
     if (!options.hotkeys || controlDown || document.activeElement.type === "text" || document.activeElement.type === "textarea") {
         return;
     }
@@ -77,21 +83,33 @@ function executeHotkey(action) {
 window.onfocus = function() {
     setShiftKey(false);
     setControlKey(false);
+    checkExtraSpeed();
 };
 
 window.onblur = function() {
     GameKeyboard.stopSpins();
+    checkExtraSpeed();
 };
 
 // handle shift/control keys
 let shiftDown = false;
 function setShiftKey(isDown) {
+    const wasDown = shiftDown;
     shiftDown = isDown;
+    document.documentElement.classList.toggle("shift-key-pressed", isDown);
+    if (shiftDown !== wasDown) {
+        window.dispatchEvent(new Event("modifierkeychange"));
+    }
 }
 
 let controlDown = false;
 function setControlKey(isDown) {
+    const wasDown = controlDown;
     controlDown = isDown;
+    document.documentElement.classList.toggle("control-key-pressed", isDown);
+    if (controlDown !== wasDown) {
+        window.dispatchEvent(new Event("modifierkeychange"));
+    }
 }
 
 // prevent spacebar scrolling
@@ -109,10 +127,14 @@ GameKeyboard.bindHotkey("b", () => toggleOffline());
 
 for (let i = 1; i < 6; i++) {
     // eslint-disable-next-line no-loop-func
-    GameKeyboard.bindHotkey(`${i}`, () => selectLoadout(i));
-    // eslint-disable-next-line no-loop-func
     GameKeyboard.bindHotkey(`shift+${i}`, () => loadLoadout(i));
 }
+
+for (let i = 1; i <= 9; i++) {
+    GameKeyboard.bindHotkey(`${i}`, () => changeActionAmount(i));
+}
+GameKeyboard.bindHotkey("0", () => changeActionAmount(actions.addAmount * 10));
+GameKeyboard.bindHotkey("backspace", () => changeActionAmount(Math.floor(actions.addAmount / 10)));
 
 GameKeyboard.bindHotkey("shift+s", () => saveList());
 GameKeyboard.bindHotkey("shift+l", () => loadList());
@@ -134,9 +156,7 @@ function handleTownHotkey(townNum) {
 }
 
 function undo() {
-    const before = copyArray(actions.next);
-    actions.next = copyArray(actions.nextLast);
-    actions.nextLast = copyArray(before);
+    actions.undoLast();
     view.updateNextActions();
     view.updateLockedHidden();
 }

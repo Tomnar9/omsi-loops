@@ -2,8 +2,8 @@
 
 let screenSize;
 
-function View() {
-    this.initalize = function() {
+class View {
+    initalize() {
         this.createTravelMenu();
         this.createStats();
         this.updateStats();
@@ -11,7 +11,6 @@ function View() {
         this.adjustDarkRitualText();
         this.updateBuffs();
         this.updateTime();
-        this.updateNextActions();
         this.updateCurrentActionsDivs();
         this.updateTotalTicks();
         this.updateAddAmount(1);
@@ -42,39 +41,87 @@ function View() {
             }, 2000);
         adjustAll();
         this.updateActionTooltips();
+        this.initActionLog();
+        document.body.removeEventListener("mouseover", this.mouseoverHandler);
+        document.body.addEventListener("mouseover", this.mouseoverHandler, {passive: true});
+        document.body.removeEventListener("focusin", this.mouseoverHandler);
+        document.body.addEventListener("focusin", this.mouseoverHandler, {passive: true});
+        window.addEventListener("modifierkeychange", this.modifierkeychangeHandler);
+        /** @type {WeakMap<HTMLElement, Element | false>} */
+        this.tooltipTriggerMap = new WeakMap();
+        this.mouseoverCount = 0;
     };
 
-    this.statLocs = [
-        { x: 166, y: 45 },
-        { x: 267, y: 80 },
-        { x: 321, y: 167 },
-        { x: 303, y: 279 },
-        { x: 224, y: 343 },
-        { x: 106, y: 343 },
-        { x: 33, y: 278 },
-        { x: 10, y: 167 },
-        { x: 61, y: 80 }
-    ];
-    this.createStats = function() {
-        statGraph.init();
-        const statContainer = document.getElementById("statContainer");
-        while (statContainer.firstChild) {
-            statContainer.removeChild(statContainer.firstChild);
+    constructor() {
+        this.mouseoverHandler = this.mouseoverHandler.bind(this);
+        this.modifierkeychangeHandler = this.modifierkeychangeHandler.bind(this);
+    }
+
+    /** @param {UIEvent} event */
+    mouseoverHandler(event) {
+        if (!(event.target instanceof HTMLElement)) return;
+        const trigger = this.getClosestTrigger(event.target);
+        this.mouseoverCount++;
+        if (trigger) {
+            let tooltipSelector = "";
+            for (const cls of trigger.classList) {
+                if (cls.startsWith("showthat")) {
+                    tooltipSelector = `.showthis${cls.slice(8)}`;
+                    break;
+                }
+            }
+            if (tooltipSelector === "") {
+                console.warn("Could not find tooltip class for trigger! Using generic selector", trigger);
+                tooltipSelector = ".showthis,.showthisO,.showthis2,.showthisH,.showthisloadout,.showthisstory";
+            }
+            for (const tooltip of trigger.querySelectorAll(tooltipSelector)) {
+                if (tooltip instanceof HTMLElement)
+                    this.fixTooltipPosition(tooltip, trigger, event.target);
+            }
         }
-        let totalStatDiv = "";
-        for (let i = 0; i < statList.length; i++) {
-            const stat = statList[i];
-            const loc = this.statLocs[i];
-            totalStatDiv +=
-            `<div class='statRadarContainer showthat' style='left:${loc.x}px;top:${loc.y}px;' onmouseover='view.showStat("${stat}")' onmouseout='view.showStat(undefined)'>
+    };
+
+    modifierkeychangeHandler() {
+        htmlElement("clearList").textContent = shiftDown ? _txt("actions>tooltip>clear_disabled") : _txt("actions>tooltip>clear_list");
+    }
+
+    /** @param {HTMLElement} element */
+    getClosestTrigger(element) {
+        let trigger = this.tooltipTriggerMap.get(element);
+        if (trigger == null) {
+            trigger = element.closest(".showthat,.showthatO,.showthat2,.showthatH,.showthatloadout,.showthatstory") || false;
+            this.tooltipTriggerMap.set(element, trigger);
+        }
+        return trigger;
+    };
+
+    createStats() {
+        if (statGraph.initalized) return;
+        statGraph.init(document.getElementById("statsContainer"));
+        const totalContainer = htmlElement("totalStatContainer");
+        for (const stat of statList) {
+            const axisTip = statGraph.getAxisTip(stat);
+            totalContainer.insertAdjacentHTML("beforebegin",
+            Raw.html`<div class='statContainer showthat stat-${stat}' style='left:${axisTip[0]}%;top:${axisTip[1]+3}%;' onmouseover='view.showStat("${stat}")' onmouseout='view.showStat(undefined)'>
                 <div class='statLabelContainer'>
-                    <div class='medium bold' style='margin-left:18px;margin-top:5px;'>${_txt(`stats>${stat}>long_form`)}</div>
-                    <div style='color:#737373;' class='statNum'><div class='medium' id='stat${stat}ss'></div></div>
-                    <div class='statNum'><div class='medium' id='stat${stat}Talent'>0</div></div> 
-                    <div class='medium statNum bold' id='stat${stat}Level'>0</div> 
+                    <div class='medium bold stat-name long-form' style='margin-left:18px;margin-top:5px;'>${_txt(`stats>${stat}>long_form`)}</div>
+                    <div class='medium bold stat-name short-form' style='margin-left:18px;margin-top:5px;'>${_txt(`stats>${stat}>short_form`)}</div>
+                    <div class='medium statNum stat-soulstone' style='color:var(--stat-soulstone-color);' id='stat${stat}ss'></div>
+                    <div class=' statNum stat-talent'></div>
+                    <div class='medium statNum stat-talent statBarWrapper'>
+                        <div class='thinProgressBarLower tiny talentBar'><div class='statBar statTalentBar' id='stat${stat}TalentBar'></div></div>
+                        <div class='label' id='stat${stat}Talent'>0</div>
+                    </div>
+                    <div class='medium statNum stat-level statBarWrapper'>
+                        <div class='thinProgressBarLower tiny expBar'><div class='statBar statLevelBar' id='stat${stat}LevelBar'></div></div>
+                        <div class='label bold' id='stat${stat}Level'>0</div>
+                    </div>
                 </div>
-                <div class='thinProgressBarUpper'><div class='statBar statLevelBar' id='stat${stat}LevelBar'></div></div>
-                <div class='thinProgressBarLower'><div class='statBar statTalentBar' id='stat${stat}TalentBar'></div></div>
+                <div class='statBars'>
+                    <div class='thinProgressBarUpper expBar'><div class='statBar statLevelLogBar logBar' id='stat${stat}LevelLogBar'></div></div>
+                    <div class='thinProgressBarLower talentBar'><div class='statBar statTalentLogBar logBar' id='stat${stat}TalentLogBar'></div></div>
+                    <div class='thinProgressBarLower soulstoneBar'><div class='statBar statSoulstoneLogBar logBar' id='stat${stat}SoulstoneLogBar'></div></div>
+                </div>
                 <div class='showthis' id='stat${stat}Tooltip' style='width:225px;'>
                     <div class='medium bold'>${_txt(`stats>${stat}>long_form`)}</div><br>${_txt(`stats>${stat}>blurb`)}
                     <br>
@@ -100,20 +147,15 @@ function View() {
                     </div><br>
                     <div class='medium bold'>${_txt("stats>tooltip>total_multiplier")}:</div> x<div id='stat${stat}TotalMult'></div>
                 </div>
-            </div>`;
+            </div>`);
         }
-
-        statContainer.innerHTML = totalStatDiv;
-
-        if (options.statColors)
-            Array.from(document.getElementsByClassName("statLevelBar")).forEach((div, index) => {
-                addStatColors(div, statList[index]);
-            });
     };
 
     // requests are properties, where the key is the function name,
     // and the array items in the value are the target of the function
-    this.requests = {
+    /** @satisfies {Partial<Record<keyof View, any[]>>} */
+    requests = {
+        updateStats: [],
         updateStat: [],
         updateSkill: [],
         updateSkills: [],
@@ -126,9 +168,14 @@ function View() {
         updateMultiPart: [],
         updateMultiPartActions: [],
         updateNextActions: [],
+        updateCloudSave: [],
         updateTime: [],
         updateOffline: [],
+        updateBonusText: [],
         updateTotals: [],
+        updateStories: [],
+        updateGlobalStory: [],
+        updateActionLogEntry: [],
         updateCurrentActionBar: [],
         updateCurrentActionsDivs: [],
         updateTotalTicks: [],
@@ -145,15 +192,16 @@ function View() {
         adjustGoldCosts: [],
         adjustExpGain: [],
         removeAllHighlights: [],
-        highlightIncompleteActions: []
+        highlightIncompleteActions: [],
+        highlightAction: [],
     };
 
     // requesting an update will call that update on the next view.update tick (based off player set UPS)
-    this.requestUpdate = function(category, target) {
+    requestUpdate(category, target) {
         if (!this.requests[category].includes(target)) this.requests[category].push(target);
     };
 
-    this.handleUpdateRequests = function() {
+    handleUpdateRequests() {
         for (const category in this.requests) {
             for (const target of this.requests[category]) {
                 this[category](target);
@@ -162,7 +210,7 @@ function View() {
         }
     };
 
-    this.update = function() {
+    update() {
 
         this.handleUpdateRequests();
 
@@ -172,66 +220,203 @@ function View() {
     };
 
 
-    this.adjustTooltipPosition = function(tooltipDiv) {
-        let parent = tooltipDiv.parentNode;
-        let y = parent.getBoundingClientRect().y;
-        let windowHeight = window.innerHeight;
-        let windowScrollY = window.scrollY;
-        let border = (windowHeight / 2) + windowScrollY;
-        if (y > border) {
-            tooltipDiv.classList.add("showthisOver");
+    adjustTooltipPosition(tooltipDiv) {
+        // this is a no-op now, all repositioning happens dynamically on mouseover.
+        // if the delegation in mouseoverHandler ends up being too costly, though, this is where
+        // we'll bind discrete mouseenter handlers, like so:
+
+        // const trigger = /** @type {HTMLElement} */(tooltipDiv.closest(".showthat,.showthatO,.showthat2,.showthatH,.showthatloadout"));
+        // trigger.onmouseenter = e => this.fixTooltipPosition(tooltipDiv, trigger, e);
+    }
+
+    /**
+     * @param {HTMLElement} tooltip
+     * @param {Element} trigger
+     * @param {Node} eventTarget
+     */
+    fixTooltipPosition(tooltip, trigger, eventTarget, delayedCall=false) {
+        if (tooltip.contains(eventTarget)) {
+            // console.log("Not fixing tooltip while cursor is inside",{tooltip,trigger,event});
+            return;
+        }
+        if (!trigger.parentElement) {
+            // trigger has been removed from document, abort
+            return;
+        }
+        const triggerRect = trigger.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const viewportRect = {
+            // document.documentElement.getBoundingClientRect();
+            top: 0,
+            left: 0,
+            right: window.innerWidth,
+            bottom: window.innerHeight,
+        };
+        const viewportMargins = {
+            top: triggerRect.top - viewportRect.top,
+            right: viewportRect.right - triggerRect.right,
+            bottom: viewportRect.bottom - triggerRect.bottom,
+            left: triggerRect.left - viewportRect.left,
+        };
+        const triggerParentStyle = getComputedStyle(trigger.parentElement);
+        const wantsSidePosition = triggerParentStyle.display === "flex" && triggerParentStyle.flexDirection === "column";
+
+        // We prefer to display tooltips above or below the trigger, except in the action list and the changelog
+        let displayOverUnder = true;
+        if (tooltipRect.height > Math.max(viewportMargins.top, viewportMargins.bottom)) displayOverUnder = false;
+        if (wantsSidePosition && tooltipRect.width <= Math.max(viewportMargins.left, viewportMargins.right)) displayOverUnder = false;
+
+        const targetPos = {
+            x: 0,
+            y: 0,
+        };
+
+        if (displayOverUnder) {
+            targetPos.y = viewportMargins.top > viewportMargins.bottom
+                          ? triggerRect.top - tooltipRect.height
+                          : triggerRect.bottom;
+            targetPos.x = viewportMargins.left > viewportMargins.right && tooltipRect.width > triggerRect.width
+                          ? triggerRect.right - tooltipRect.width
+                          : triggerRect.left;
         } else {
-            tooltipDiv.classList.remove("showthisOver");
+            targetPos.x = viewportMargins.left > viewportMargins.right
+                          ? triggerRect.left - tooltipRect.width
+                          : triggerRect.right;
+            targetPos.y = viewportMargins.top > viewportMargins.bottom
+                          ? triggerRect.bottom - tooltipRect.height
+                          : triggerRect.top;
+        }
+
+        // check all bounds and nudge the tooltip back onto the screen if necessary, favoring the
+        // top and left edges. don't trust the trbl on tooltipRect, since adjusting those isn't in spec.
+        targetPos.x = Math.min(targetPos.x, viewportRect.right - tooltipRect.width);
+        targetPos.y = Math.min(targetPos.y, viewportRect.bottom - tooltipRect.height);
+        targetPos.x = Math.max(targetPos.x, viewportRect.left);
+        targetPos.y = Math.max(targetPos.y, viewportRect.top);
+
+        // console.log("Fixing tooltip:",{tooltip,tooltipRect,trigger,triggerRect,event});
+
+        // Now, check and see if we can do a nudge (valid rect, currently fixed) or if we have to do initial position
+        const curLeft = parseFloat(tooltip.style.left);
+        const curTop = parseFloat(tooltip.style.top);
+        if (tooltip.style.position === "fixed" && isFinite(curLeft) && isFinite(curTop) && tooltipRect.width > 0 && tooltipRect.height > 0) {
+            // simple nudge
+            tooltip.style.left = `${curLeft + targetPos.x - tooltipRect.x}px`;
+            tooltip.style.top = `${curTop + targetPos.y - tooltipRect.y}px`;
+        } else {
+            // initial positioning
+            tooltip.style.position = "fixed";
+            tooltip.style.left = `${targetPos.x - viewportRect.left}px`;
+            tooltip.style.top = `${targetPos.y - viewportRect.top}px`;
+            tooltip.style.right = "auto";
+            tooltip.style.bottom = "auto";
+            tooltip.style.margin = "0";
+            if (!delayedCall) {
+                // queue up a nudge ASAP, but avoid infinite recursion
+                requestAnimationFrame(() => this.fixTooltipPosition(tooltip, trigger, eventTarget, true));
+            }
         }
     }
 
-    this.showStat = function(stat) {
+    showStat(stat) {
         statShowing = stat;
         if (stat !== undefined) this.updateStat(stat);
     };
 
-    this.updateStatGraphNeeded = false;
+    updateStatGraphNeeded = false;
 
-    this.updateStat = function(stat) {
+    /** @param {StatName} stat */
+    updateStat(stat) {
         const level = getLevel(stat);
         const talent = getTalent(stat);
+        const totalLevel = Object.values(stats).map(s=>s.statLevelExp.level).reduce((a,b) => a + b);
+        const totalTalent = Object.values(stats).map(s=>s.talentLevelExp.level).reduce((a,b) => a + b);
         const levelPrc = `${getPrcToNextLevel(stat)}%`;
         const talentPrc = `${getPrcToNextTalent(stat)}%`;
-        document.getElementById(`stat${stat}LevelBar`).style.width = levelPrc;
-        document.getElementById(`stat${stat}TalentBar`).style.width = talentPrc;
+
+        this.updateLevelLogBar("statsContainer", `stat${stat}LevelLogBar`, level, `stat${stat}LevelBar`, levelPrc);
+        this.updateLevelLogBar("statsContainer", `stat${stat}TalentLogBar`, talent, `stat${stat}TalentBar`, talentPrc);
+
         document.getElementById(`stat${stat}Level`).textContent = intToString(level, 1);
         document.getElementById(`stat${stat}Talent`).textContent = intToString(talent, 1);
+        document.getElementById(`stattotalLevel`).textContent = intToString(totalLevel, 1);
+        document.getElementById(`stattotalTalent`).textContent = intToString(totalTalent, 1);
+        document.getElementById(`stattotalLevel2`).textContent = formatNumber(totalLevel);
+        document.getElementById(`stattotalTalent2`).textContent = formatNumber(totalTalent);
 
         if (statShowing === stat || document.getElementById(`stat${stat}LevelExp`).innerHTML === "") {
-            document.getElementById(`stat${stat}Level2`).textContent = intToString(level, 1);
-            const expOfLevel = getExpOfLevel(level);
-            document.getElementById(`stat${stat}LevelExp`).textContent = intToString(stats[stat].exp - expOfLevel, 1);
-            document.getElementById(`stat${stat}LevelExpNeeded`).textContent = intToString(`${getExpOfLevel(level + 1) - expOfLevel}`, 1);
+            document.getElementById(`stat${stat}Level2`).textContent = formatNumber(level);
+            document.getElementById(`stat${stat}LevelExp`).textContent = intToString(stats[stat].statLevelExp.exp, 1);
+            document.getElementById(`stat${stat}LevelExpNeeded`).textContent = intToString(stats[stat].statLevelExp.expRequiredForNextLevel, 1);
             document.getElementById(`stat${stat}LevelProgress`).textContent = intToString(levelPrc, 2);
 
-            document.getElementById(`stat${stat}Talent2`).textContent = intToString(talent, 1);
-            const expOfTalent = getExpOfTalent(talent);
-            document.getElementById(`stat${stat}TalentExp`).textContent = intToString(stats[stat].talent - expOfTalent, 1);
-            document.getElementById(`stat${stat}TalentExpNeeded`).textContent = intToString(`${getExpOfTalent(talent + 1) - expOfTalent}`, 1);
-            document.getElementById(`stat${stat}TalentMult`).textContent = intToString(calcTalentMult(talent), 3);
+            document.getElementById(`stat${stat}Talent2`).textContent = formatNumber(talent);
+            document.getElementById(`stat${stat}TalentExp`).textContent = intToString(stats[stat].talentLevelExp.exp, 1);
+            document.getElementById(`stat${stat}TalentExpNeeded`).textContent = intToString(stats[stat].talentLevelExp.expRequiredForNextLevel, 1);
+            document.getElementById(`stat${stat}TalentMult`).textContent = intToString(stats[stat].talentMult, 3);
             document.getElementById(`stat${stat}TalentProgress`).textContent = intToString(talentPrc, 2);
             document.getElementById(`stat${stat}TotalMult`).textContent = intToString(getTotalBonusXP(stat), 3);
         }
-    };
+};
 
-    this.updateStats = function() {
+    logBarScaleBase = 1.25;
+    /** @param {number} maxValue  */
+    getMaxLogBarScale(maxValue) {
+        return this.logBarScaleBase ** Math.ceil(Math.log(maxValue) / Math.log(this.logBarScaleBase));
+    }
+
+    /**
+     * @param {string} maxContainerId
+     * @param {string} logBarId
+     * @param {number} level
+     * @param {string} [levelBarId]
+     * @param {string} [levelPrc]
+     */
+    updateLevelLogBar(maxContainerId, logBarId, level, levelBarId, levelPrc) {
+        const maxContainer = htmlElement(maxContainerId);
+        const logLevel = level; //Math.log10(level);
+        let maxValue = parseFloat(getComputedStyle(maxContainer).getPropertyValue("--max-bar-value")) || 0;
+
+        const logBar = htmlElement(logBarId);
+        if (level > maxValue) {
+            maxValue = this.getMaxLogBarScale(level + 1);
+            maxContainer.style.setProperty("--max-bar-value", String(maxValue));
+        }
+        logBar.style.setProperty("--bar-value", String(logLevel));
+        if (levelBarId) document.getElementById(levelBarId).style.width = levelPrc;
+    }
+
+    updateStats(skipAnimation) {
+        let maxValue = 100; // I really need to stop writing this default explicitly everywhere
+        for (const stat of statList) {
+            for (const value of [getLevel(stat), getTalent(stat), stats[stat].soulstone]) {
+                maxValue = Math.max(value, maxValue);
+            }
+        }
+        maxValue = this.getMaxLogBarScale(maxValue);
+        const statsContainer = htmlElement("statsContainer");
+        if (skipAnimation) {
+            statsContainer.classList.remove("animate-logBars");
+            statGraph.update(true);
+        }
+        statsContainer.style.setProperty("--max-bar-value", String(maxValue));
+        if (!statsContainer.classList.contains("animate-logBars")) {
+            requestAnimationFrame(() => statsContainer.classList.add("animate-logBars"));
+        }
+
         for (const stat of statList) {
             this.updateStat(stat);
         }
     };
 
-    this.showSkill = function(skill) {
+    showSkill(skill) {
         skillShowing = skill;
         if (skill !== undefined) this.updateSkill(skill);
     };
 
-    this.updateSkill = function(skill) {
-        if (skills[skill].exp === 0) {
+    /** @param {SkillName} skill */
+    updateSkill(skill) {
+        if (skills[skill].levelExp.level === 0) {
             document.getElementById(`skill${skill}Container`).style.display = "none";
             return;
         }
@@ -246,9 +431,8 @@ function View() {
         document.getElementById(`skill${skill}LevelBar`).style.width = `${levelPrc}%`;
 
         if (skillShowing === skill) {
-            const expOfLevel = getExpOfSkillLevel(getSkillLevel(skill));
-            document.getElementById(`skill${skill}LevelExp`).textContent = intToString(skills[skill].exp - expOfLevel, 1);
-            document.getElementById(`skill${skill}LevelExpNeeded`).textContent = intToString(`${getExpOfSkillLevel(getSkillLevel(skill) + 1) - expOfLevel}`, 1);
+            document.getElementById(`skill${skill}LevelExp`).textContent = intToString(skills[skill].levelExp.exp, 1);
+            document.getElementById(`skill${skill}LevelExpNeeded`).textContent = intToString(skills[skill].levelExp.expRequiredForNextLevel, 1);
             document.getElementById(`skill${skill}LevelProgress`).textContent = intToString(levelPrc, 2);
 
             if (skill === "Dark") {
@@ -280,18 +464,18 @@ function View() {
         this.adjustTooltipPosition(container.querySelector("div.showthis"));
     };
 
-    this.updateSkills = function() {
+    updateSkills() {
         for (const skill of skillList) {
             this.updateSkill(skill);
         }
     };
 
-    this.showBuff = function(buff) {
+    showBuff(buff) {
         buffShowing = buff;
         if (buff !== undefined) this.updateBuff(buff);
     };
 
-    this.updateBuff = function(buff) {
+    updateBuff(buff) {
         if (buffs[buff].amt === 0) {
             document.getElementById(`buff${buff}Container`).style.display = "none";
             return;
@@ -305,46 +489,143 @@ function View() {
         this.adjustTooltipPosition(container.querySelector("div.showthis"));
     };
 
-    this.updateBuffs = function() {
+    updateBuffs() {
         for (const buff of buffList) {
             this.updateBuff(buff);
         }
     };
 
-    this.updateTime = function() {
-        document.getElementById("timeBar").style.width = `${100 - timer / timeNeeded * 100}%`;
-        document.getElementById("timer").textContent = `${intToString((timeNeeded - timer), 1)} | ${formatTime((timeNeeded - timer) / 50 / getActualGameSpeed())}`;
-    };
-    this.updateOffline = function() {
-        document.getElementById("bonusSeconds").textContent = formatTime(totalOfflineMs / 1000);
+    /** @param {string|gapi.client.drive.File} fileOrText */
+    updateCloudSave(fileOrText) {
+        const list = document.getElementById("cloud_save_result");
+        if (typeof fileOrText === "string") {
+            list.innerHTML = fileOrText;
+        } else if (fileOrText) {
+            const fileId = fileOrText.id;
+            const fileName = fileOrText.name;
+            let li = document.getElementById(`cloud_save_${fileId}`);
+            if (li && !fileName) {
+                li.remove();
+                return;
+            }
+            if (!li) {
+                li = document.createElement("li");
+                list.appendChild(li);
+            }
+            li.className = "cloud_save";
+            li.id = `cloud_save_${fileId}`;
+            li.dataset.fileId = fileId;
+            li.dataset.fileName = fileName;
+            li.innerHTML = `
+                <button onclick='startRenameCloudSave("${fileId}")' class='cloud_rename actionIcon fas fa-pencil-alt'></button>
+                <div class="cloud_save_name"'>
+                    ${fileName}
+                </div>
+                <button class='button cloud_import' style='margin-top: 1px;' onclick='googleCloud.importFile("${fileId}")'>${_txt("menu>save>import_button")}</button>
+                <button class='button cloud_delete' style='margin-top: 1px;' onclick='askDeleteCloudSave("${fileId}")'>${_txt("menu>save>delete_button")}</button>
+            `;
+            const name = /** @type {HTMLElement} */(li.querySelector(".cloud_save_name"));
+            name.textContent = fileName;
+            name.title = fileName;
+        }
     }
-    this.updateTotalTicks = function() {
+
+    updateTime() {
+        document.getElementById("timeBar").style.width = `${100 - timer / timeNeeded * 100}%`;
+        document.getElementById("timer").textContent = `${intToString((timeNeeded - timer), options.fractionalMana ? 2 : 1, true)} | ${formatTime((timeNeeded - timer) / 50 / getActualGameSpeed())}`;
+        this.adjustGoldCost({varName:"Wells", cost: Action.ManaWell.goldCost()});
+    };
+    updateOffline() {
+        document.getElementById("bonusSeconds").textContent = formatTime(totalOfflineMs / 1000);
+        const returnTimeButton = document.getElementById("returnTimeButton");
+        if (returnTimeButton instanceof HTMLButtonElement) {
+            returnTimeButton.disabled = totalOfflineMs < 86400_000;
+        }
+    }
+    updateBonusText() {
+        const element = document.getElementById("bonusText");
+        if (!element) return;
+        element.innerHTML = this.getBonusText() ?? "";
+    }
+    getBonusText() {
+        let text = _txt("time_controls>bonus_seconds>main_text");
+        let lastText = null;
+        while (lastText !== text) {
+            lastText = text;
+            text = text?.replace(/{([^+{}-]*)([+-]?)(.*?)}/g, (_str, lhs, op, rhs) => this.getBonusReplacement(lhs, op, rhs));
+        }
+        return text;
+    }
+    /** @type {(lhs: string, op?: string, rhs?: string) => string} */
+    getBonusReplacement(lhs, op, rhs) {
+        // this is the second time I've manually implemented this text-replacement pattern (first was for Action Log entries). Next time I need to make it a
+        // generic operation on Localization; I think I'm beginning to figure out what will be needed for it
+        const fgSpeed = Math.max(5, options.speedIncrease10x ? 10 : 0, options.speedIncrease20x ? 20 : 0, options.speedIncreaseCustom);
+        const bgSpeed = !isFinite(options.speedIncreaseBackground) ? -1 : options.speedIncreaseBackground ?? -1;
+        const variables = {
+            __proto__: null, // toString is not a valid replacement name
+            get background_info() {
+                if (bgSpeed < 0 || bgSpeed === fgSpeed) {
+                    return _txt("time_controls>bonus_seconds>background_disabled");
+                } else if (bgSpeed === 0) {
+                    return _txt("time_controls>bonus_seconds>background_0x");
+                } else if (bgSpeed < 1) {
+                    return _txt("time_controls>bonus_seconds>background_regen");
+                } else if (bgSpeed === 1) {
+                    return _txt("time_controls>bonus_seconds>background_1x");
+                } else if (bgSpeed < fgSpeed) {
+                    return _txt("time_controls>bonus_seconds>background_slower");
+                } else {
+                    return _txt("time_controls>bonus_seconds>background_faster");
+                }
+            },
+            get state() {return `<span class='bold' id='isBonusOn'>${_txt(`time_controls>bonus_seconds>state>${isBonusActive() ? "on" : "off"}`)}</span>`},
+            get counter_text() {return `<span class='bold'>${_txt("time_controls>bonus_seconds>counter_text")}</span>`},
+            get bonusSeconds() {return `<span id='bonusSeconds'>${formatTime(totalOfflineMs / 1000)}</span>`},
+            get lag_warning() {return lagSpeed > 0 ? _txt("time_controls>bonus_seconds>lag_warning") : ""},
+            speed: fgSpeed,
+            background_speed: bgSpeed,
+            lagSpeed,
+        }
+        const lval = variables[lhs] ?? (parseFloat(lhs) || 0);
+        const rval = variables[rhs] ?? (parseFloat(rhs) || 0);
+        return String(
+            op === "+" ? lval + rval
+            : op === "-" ? lval - rval
+            : lval);
+    }
+    updateTotalTicks() {
         document.getElementById("totalTicks").textContent = `${formatNumber(actions.completedTicks)} | ${formatTime(timeCounter)}`;
         document.getElementById("effectiveTime").textContent = `${formatTime(effectiveTime)}`;
     };
-    this.updateResource = function(resource) {
-        if (resource !== "gold") document.getElementById(`${resource}Div`).style.display = resources[resource] ? "inline-block" : "none";
+    updateResource(resource) {
+        const element = htmlElement(`${resource}Div`, false, false);
+        if (element) element.style.display = resources[resource] ? "inline-block" : "none";
 
-        if (resource === "supplies") document.getElementById("suppliesCost").textContent = towns[0].suppliesCost;
-        if (resource === "teamMembers") document.getElementById("teamCost").textContent = (resources.teamMembers + 1) * 100;
+        if (resource === "supplies") document.getElementById("suppliesCost").textContent = String(towns[0].suppliesCost);
+        if (resource === "teamMembers") document.getElementById("teamCost").textContent = `${(resources.teamMembers + 1) * 100}`;
 
-        if (Number.isFinite(resources[resource])) document.getElementById(resource).textContent = resources[resource];
+        if (Number.isFinite(resources[resource])) htmlElement(resource).textContent = resources[resource];
     };
-    this.updateResources = function() {
+    updateResources() {
         for (const resource in resources) this.updateResource(resource);
     };
-    this.updateActionTooltips = function() {
+    updateActionTooltips() {
         document.getElementById("goldInvested").textContent = intToStringRound(goldInvested);
         document.getElementById("bankInterest").textContent = intToStringRound(goldInvested * .001);
         document.getElementById("actionAllowedPockets").textContent = intToStringRound(towns[7].totalPockets);
         document.getElementById("actionAllowedWarehouses").textContent = intToStringRound(towns[7].totalWarehouses);
         document.getElementById("actionAllowedInsurance").textContent = intToStringRound(towns[7].totalInsurance);
-        document.getElementById("totalSurveyProgress").textContent = getExploreProgress();
+        document.getElementById("totalSurveyProgress").textContent = `${getExploreProgress()}`;
         Array.from(document.getElementsByClassName("surveySkill")).forEach(div => {
-            div.textContent = getExploreSkill();
+            div.textContent = `${getExploreSkill()}`;
         });
+        for (const town of towns) {
+            const varName = town.progressVars.find(v => v.startsWith("Survey"));
+            this.updateGlobalSurvey(varName, town);
+        }
     }
-    this.updateTeamCombat = function() {
+    updateTeamCombat() {
         if (towns[2].unlocked) {
             document.getElementById("skillSCombatContainer").style.display = "inline-block";
             document.getElementById("skillTCombatContainer").style.display = "inline-block";
@@ -355,130 +636,111 @@ function View() {
             document.getElementById("skillTCombatContainer").style.display = "none";
         }
     };
-    this.zoneTints = [
-        "rgba(255, 152, 0, 0.2)", //Beginnersville
-        "rgba(76, 175, 80, 0.2)", //Forest Path
-        "rgba(255, 235, 59, 0.2)", //Merchanton
-        "rgba(96, 125, 139, 0.2)", //Mt Olympus
-        "rgba(255, 255, 255, 0.2)", //Valhalla
-        "rgba(103, 58, 183, 0.2)", //Startington
-        "rgba(76, 175, 80, 0.4)", //Jungle Path
-        "rgba(255, 235, 59, 0.4)", //Commerceville
-        "rgba(103, 58, 183, 0.4)", //Valley of Olympus
-        //"rgba(103, 58, 183, 0.2)"
+    zoneTints = [
+        "var(--zone-tint-1)", //Beginnersville
+        "var(--zone-tint-2)", //Forest Path
+        "var(--zone-tint-3)", //Merchanton
+        "var(--zone-tint-4)", //Mt Olympus
+        "var(--zone-tint-5)", //Valhalla
+        "var(--zone-tint-6)", //Startington
+        "var(--zone-tint-7)", //Jungle Path
+        "var(--zone-tint-8)", //Commerceville
+        "var(--zone-tint-9)", //Valley of Olympus
     ];
-    this.updateNextActions = function() {
-        let count = 0;
-        while (nextActionsDiv.firstChild) {
-            if (document.getElementById(`capButton${count}`)) {
-                document.getElementById(`capButton${count}`).removeAttribute("onclick");
-            }
-            // not for journey
-            if (document.getElementById(`plusButton${count}`)) {
-                document.getElementById(`plusButton${count}`).removeAttribute("onclick");
-                document.getElementById(`minusButton${count}`).removeAttribute("onclick");
-                document.getElementById(`splitButton${count}`).removeAttribute("onclick");
-            }
-            document.getElementById(`upButton${count}`).removeAttribute("onclick");
-            document.getElementById(`downButton${count}`).removeAttribute("onclick");
-            document.getElementById(`removeButton${count}`).removeAttribute("onclick");
-
-            const dragAndDropDiv = document.getElementById(`nextActionContainer${count}`);
-            dragAndDropDiv.removeAttribute("ondragover");
-            dragAndDropDiv.removeAttribute("ondrop");
-            dragAndDropDiv.removeAttribute("ondragstart");
-            dragAndDropDiv.removeAttribute("ondragend");
-            dragAndDropDiv.removeAttribute("ondragenter");
-            dragAndDropDiv.removeAttribute("ondragleave");
-
-            while (nextActionsDiv.firstChild.firstChild) {
-                if (nextActionsDiv.firstChild.firstChild instanceof HTMLImageElement) {
-                    nextActionsDiv.firstChild.firstChild.src = "";
-                }
-                nextActionsDiv.firstChild.removeChild(nextActionsDiv.firstChild.firstChild);
-            }
-            count++;
-            nextActionsDiv.removeChild(nextActionsDiv.firstChild);
+    highlightAction(index) {
+        const element = document.getElementById(`nextActionContainer${index}`);
+        if (!(element instanceof HTMLElement)) return;
+        element.scrollIntoView({
+            behavior: "smooth",
+            block: "nearest",
+            inline: "nearest",
+        })
+    };
+    updateNextActions() {
+        const {scrollTop} = nextActionsDiv; // save the current scroll position
+        if (options.predictor) {
+            Koviko.preUpdateHandler(nextActionsDiv);
         }
 
-        let totalDivText = "";
-
-        for (let i = 0; i < actions.next.length; i++) {
-            const action = actions.next[i];
-            const translatedAction = translateClassNames(action.name);
-            let capButton = "";
-            const townNum = translatedAction.townNum;
-            const travelNum = getTravelNum(action.name);
-            const collapses = [];
-            // eslint-disable-next-line no-loop-func
-            actions.next.forEach((a, index) => {
-                if (a.collapsed) {
-                    const collapse = {};
-                    collapse.zone = translateClassNames(a.name).townNum;
-                    collapse.index = index;
-                    collapses.push(collapse);
-                }
-            });
-            if (hasLimit(action.name)) {
-                capButton = `<i id='capButton${i}' onclick='capAmount(${i}, ${townNum})' class='actionIcon far fa-circle'></i>`;
-            } else if (isTraining(action.name)) {
-                capButton = `<i id='capButton${i}' onclick='capTraining(${i})' class='actionIcon far fa-circle'></i>`;
-            }
-            let isSingular;
-            if (translatedAction.allowed === undefined) {
-                isSingular = false;
-            } else {
-                isSingular = translatedAction.allowed() === 1;
-            }
-            const actionLoops = action.loops > 99999 ? toSuffix(action.loops) : formatNumber(action.loops);
-            const opacity = action.disabled || action.loops === 0 ? "opacity: 0.5" : "";
-            let display = "display: flex";
-            for (const collapse of collapses) {
-                if (townNum === collapse.zone && i < collapse.index) display = "display: none";
-            }
-            let color;
-            if (action.name === "Face Judgement") {
-                color = "linear-gradient(to bottom, rgb(183, 203, 196) 49%, transparent 51%), linear-gradient(to right, rgba(255, 255, 255, 0.2) 50%, rgba(103, 58, 183, 0.2) 51%)";
-            } else if (action.name === "Fall From Grace") {
-                color = "linear-gradient(to bottom, rgb(255, 255, 255, 0.2) 49%, rgba(103, 58, 183, 0.2) 51%)";
-            } else if (action.name === "Open Rift") {
-                color = "linear-gradient(to bottom, rgb(255, 152, 0, 0.2) 49%, rgba(103, 58, 183, 0.2) 51%)";
-            } else {
-                color = (travelNum > 0 || travelNum == -5) ? `linear-gradient(${this.zoneTints[townNum]} 49%, ${this.zoneTints[townNum + travelNum]} 51%)` : this.zoneTints[townNum];
-            }
-            const imageName = action.name.startsWith("Assassin") ? "assassin" : camelize(action.name);
-            totalDivText +=
-                `<div
-                    id='nextActionContainer${i}'
-                    class='nextActionContainer small'
-                    ondragover='handleDragOver(event)'
-                    ondrop='handleDragDrop(event)'
-                    ondragstart='handleDragStart(event)'
-                    ondragend='draggedUndecorate(${i})'
-                    ondragenter='dragOverDecorate(${i})'
-                    ondragleave='dragExitUndecorate(${i})'
-                    draggable='true' data-index='${i}'
-                    style='background: ${color}; ${opacity}; ${display};'
-                >
-                    <div><img src='img/${imageName}.svg' class='smallIcon imageDragFix'> x 
-                    <div class='bold'>${actionLoops}</div></div>
-                    <div style='float:right; margin-top: 1px; margin-right: 3px;'>
-                        ${capButton}
-                        ${isSingular ? "" : `<i id='plusButton${i}' onclick='addLoop(${i})' class='actionIcon fas fa-plus'></i>`}
-                        ${isSingular ? "" : `<i id='minusButton${i}' onclick='removeLoop(${i})' class='actionIcon fas fa-minus'></i>`}
-                        ${isSingular ? "" : `<i id='splitButton${i}' onclick='split(${i})' class='actionIcon fas fa-arrows-alt-h'></i>`}
-                        ${travelNum ? `<i id='collapseButton${i}' onclick='collapse(${i})' class='actionIcon fas fa-${action.collapsed ? "expand" : "compress"}-alt'></i>` : ""}
-                        <i id='upButton${i}' onclick='moveUp(${i})' class='actionIcon fas fa-sort-up'></i>
-                        <i id='downButton${i}' onclick='moveDown(${i})' class='actionIcon fas fa-sort-down'></i>
-                        <i id='skipButton${i}' onclick='disableAction(${i})' class='actionIcon far fa-${action.disabled ? "check" : "times"}-circle'></i>
-                        <i id='removeButton${i}' onclick='removeAction(${i})' class='actionIcon fas fa-times'></i>
+        const actionContainers = d3.select(nextActionsDiv)
+            .selectAll(".nextActionContainer")
+            .data(actions.next.map((a, index) => ({...a, actionId: a.actionId /* not enumerable by design */, index, action: getActionPrototype(a.name)})), a => a.actionId)
+            .join(enter => enter
+                .append(({action, actionId: i}) => Rendered.html`
+                    <div
+                        id='nextActionContainer${i}'
+                        class='nextActionContainer small showthat'
+                        ondragover=${handleDragOver}
+                        ondrop=${handleDragDrop}
+                        ondragstart=${handleDragStart}
+                        ondragend=${draggedUndecorate.bind(null, i)}
+                        ondragenter=${dragOverDecorate.bind(null, i)}
+                        ondragleave=${dragExitUndecorate.bind(null, i)}
+                        draggable='true' data-action-id='${i}'
+                    >
+                        <div class='nextActionLoops'><img class='smallIcon imageDragFix'> ×
+                        <div class='bold'></div></div>
+                        <div class='nextActionButtons'>
+                            <button onclick=${capAction.bind(null, i)}      class='capButton actionIcon far fa-circle'></button>
+                            <button onclick=${addLoop.bind(null, i)}        class='plusButton actionIcon fas fa-plus'></button>
+                            <button onclick=${removeLoop.bind(null, i)}     class='minusButton actionIcon fas fa-minus'></button>
+                            <button onclick=${split.bind(null, i)}          class='splitButton actionIcon fas fa-arrows-alt-h'></button>
+                            <button onclick=${collapse.bind(null, i)}       class='collapseButton actionIcon fas fa-compress-alt'></button>
+                            <button onclick=${moveUp.bind(null, i)}         class='upButton actionIcon fas fa-sort-up'></button>
+                            <button onclick=${moveDown.bind(null, i)}       class='downButton actionIcon fas fa-sort-down'></button>
+                            <button onclick=${disableAction.bind(null, i)}  class='skipButton actionIcon far fa-times-circle'></button>
+                            <button onclick=${removeAction.bind(null, i)}   class='removeButton actionIcon fas fa-times'></button>
+                        </div>
+                        <ul class='koviko'></ul>
                     </div>
-                </div>`;
+                `.firstElementChild))
+            .property("data-index", (_a, i) => i)
+            .call(container => {
+                for (const {index} of towns) {
+                    container.classed(`zone-${index+1}`, a => a.action.townNum === index);
+                }
+                for (const type of actionTypes) {
+                    container.classed(`action-type-${type}`, a => a.action.type === type);
+                }
+            })
+            .classed("action-has-limit", a => hasLimit(a.name))
+            .classed("action-is-training", a => isTraining(a.name))
+            .classed("action-is-singular", a => a.action.allowed?.() === 1)
+            .classed("action-is-travel", a => getPossibleTravel(a.name).length > 0)
+            .classed("action-disabled", a => !actions.isValidAndEnabled(a))
+            .classed("user-disabled", a => !!a.disabled)
+            .classed("user-collapsed", a => !!a.collapsed)
+            .classed("zone-collapsed", a => actions.zoneSpanAtIndex(a.index).isCollapsed)
+            .classed("action-is-collapsing-zone", a => {
+                const zoneSpan = actions.zoneSpanAtIndex(a.index);
+                return zoneSpan.end === a.index && zoneSpan.isCollapsed;
+            })
+            .style("background", ({action}) => {
+                const {townNum} = action;
+                const travelNums = getPossibleTravel(action.name);
+                let color = this.zoneTints[townNum];
+                if (travelNums.length === 1) {
+                    color = `linear-gradient(${color} 49%, ${this.zoneTints[townNum + travelNums[0]]} 51%)`;
+                } else if (travelNums.length > 1) {
+                    color = `conic-gradient(${color} 100grad, ${travelNums.map((travelNum, i) => `${this.zoneTints[townNum + travelNum]} ${i * 200 / travelNums.length + 100}grad ${(i + 1) * 200 / travelNums.length + 100}grad`).join(", ")}, ${color} 300grad)`
+                }
+                return color;
+            })
+            .call(container => container
+                .select("div.nextActionLoops > img")
+                .property("src", a => `img/${a.action.imageName}.svg`))
+            .call(container => container
+                .select("div.nextActionLoops > div.bold")
+                .text(action => action.loops > 99999 ? toSuffix(action.loops) : formatNumber(action.loops))
+            )
+
+        if (options.predictor) {
+            Koviko.postUpdateHandler(actions.next, nextActionsDiv);
         }
-        nextActionsDiv.innerHTML = totalDivText;
+        nextActionsDiv.scrollTop = Math.max(nextActionsDiv.scrollTop, scrollTop); // scrolling down to see the new thing added is okay, scrolling up when you click an action button is not
     };
 
-    this.updateCurrentActionsDivs = function() {
+    updateCurrentActionsDivs() {
         let totalDivText = "";
 
         // definite leak - need to remove listeners and image
@@ -492,7 +754,7 @@ function View() {
                     <div class='curActionBar' id='action${i}Bar'></div>
                     <div class='actionSelectedIndicator' id='action${i}Selected'></div>
                     <img src='img/${imageName}.svg' class='smallIcon'>
-                    <div id='action${i}LoopsDone' style='margin-left:3px; border-left: 1px solid #b9b9b9;padding-left: 3px;'>${actionLoopsDone}</div>
+                    <div id='action${i}LoopsDone' style='margin-left:3px; border-left: 1px solid var(--action-separator-border);padding-left: 3px;'>${actionLoopsDone}</div>
                     /<div id='action${i}Loops'>${actionLoops}</div>
                 </div>`;
         }
@@ -511,7 +773,9 @@ function View() {
                     `<b>${_txt("actions>current_action>last_mana")}</b> <div id='action${i}LastMana'></div><br>` +
                     `<b>${_txt("actions>current_action>mana_remaining")}</b> <div id='action${i}Remaining'></div><br>` +
                     `<b>${_txt("actions>current_action>gold_remaining")}</b> <div id='action${i}GoldRemaining'></div><br>` +
-                    `<b>${_txt("actions>current_action>time_spent")}</b> <div id='action${i}TimeSpent'></div><br><br>` +
+                    `<b>${_txt("actions>current_action>time_spent")}</b> <div id='action${i}TimeSpent'></div><br>` +
+                    `<b>${_txt("actions>current_action>total_time_elapsed")}</b> <div id='action${i}TotalTimeElapsed'></div><br>` +
+                    `<br>` +
                     `<div id='action${i}ExpGain'></div>` +
                     `<div id='action${i}HasFailed' style='display:none'>` +
                         `<b>${_txt("actions>current_action>failed_attempts")}</b> <div id='action${i}Failed'></div><br>` +
@@ -524,7 +788,7 @@ function View() {
         this.mouseoverAction(0, false);
     };
 
-    this.updateCurrentActionBar = function(index) {
+    updateCurrentActionBar(index) {
         const div = document.getElementById(`action${index}Bar`);
         if (!div) {
             return;
@@ -534,35 +798,39 @@ function View() {
             return;
         }
         if (action.errorMessage) {
-            document.getElementById(`action${index}Failed`).textContent = action.loopsLeft;
+            document.getElementById(`action${index}Failed`).textContent = `${action.loopsLeft}`;
             document.getElementById(`action${index}Error`).textContent = action.errorMessage;
-            document.getElementById(`action${index}HasFailed`).style.display = "block";
+            document.getElementById(`action${index}HasFailed`).style.display = "";
             div.style.width = "100%";
-            div.style.backgroundColor = "#ff0000";
+            div.style.backgroundColor = "var(--cur-action-error-indicator)";
             div.style.height = "30%";
             div.style.marginTop = "5px";
-            if (action.name === "Heal The Sick") unlockStory("failedHeal");
-            if (action.name === "Brew Potions" && resources.reputation >= 0 && resources.herbs >= 10) unlockStory("failedBrewPotions");
-            if (action.name === "Brew Potions" && resources.reputation < 0 && resources.herbs >= 10) unlockStory("failedBrewPotionsNegativeRep");
-            if (action.name === "Gamble" && resources.reputation < -5) unlockStory("failedGamble");
-            if (action.name === "Gamble" && resources.gold < 20 && resources.reputation > -6) unlockStory("failedGambleLowMoney");
-            if (action.name === "Gather Team") unlockStory("failedGatherTeam");
-            if (action.name === "Craft Armor") unlockStory("failedCraftArmor");
+            if (action.name === "Heal The Sick") setStoryFlag("failedHeal");
+            if (action.name === "Brew Potions" && resources.reputation >= 0 && resources.herbs >= 10) setStoryFlag("failedBrewPotions");
+            if (action.name === "Brew Potions" && resources.reputation < 0 && resources.herbs >= 10) setStoryFlag("failedBrewPotionsNegativeRep");
+            if (action.name === "Gamble" && resources.reputation < -5) setStoryFlag("failedGamble");
+            if (action.name === "Gamble" && resources.gold < 20 && resources.reputation > -6) setStoryFlag("failedGambleLowMoney");
+            if (action.name === "Gather Team") setStoryFlag("failedGatherTeam");
+            if (action.name === "Craft Armor") setStoryFlag("failedCraftArmor");
+            if (action.name === "Imbue Body") setStoryFlag("failedImbueBody");
+            if (action.name === "Accept Donations") setStoryFlag("failedReceivedDonations");
+            if (action.name === "Raise Zombie") setStoryFlag("failedRaiseZombie")
         } else if (action.loopsLeft === 0) {
             div.style.width = "100%";
-            div.style.backgroundColor = "#6d6d6d";
+            div.style.backgroundColor = "var(--cur-action-completed-background)";
         } else {
             div.style.width = `${100 * action.ticks / action.adjustedTicks}%`;
         }
 
         // only update tooltip if it's open
         if (curActionShowing === index) {
-            document.getElementById(`action${index}ManaOrig`).textContent = formatNumber(action.manaCost() * action.loops);
-            document.getElementById(`action${index}ManaUsed`).textContent = formatNumber(action.manaUsed);
+            document.getElementById(`action${index}ManaOrig`).textContent = intToString(action.manaCost() * action.loops, options.fractionalMana ? 3 : 1);
+            document.getElementById(`action${index}ManaUsed`).textContent = intToString(action.manaUsed, options.fractionalMana ? 3 : 1);
             document.getElementById(`action${index}LastMana`).textContent = intToString(action.lastMana, 3);
-            document.getElementById(`action${index}Remaining`).textContent = formatNumber(action.manaRemaining);
+            document.getElementById(`action${index}Remaining`).textContent = intToString(action.manaRemaining, options.fractionalMana ? 3 : 1);
             document.getElementById(`action${index}GoldRemaining`).textContent = formatNumber(action.goldRemaining);
             document.getElementById(`action${index}TimeSpent`).textContent = formatTime(action.timeSpent);
+            document.getElementById(`action${index}TotalTimeElapsed`).textContent = formatTime(action.effectiveTimeElapsed);
 
             let statExpGain = "";
             const expGainDiv = document.getElementById(`action${index}ExpGain`);
@@ -578,40 +846,112 @@ function View() {
         }
     };
 
-    this.mouseoverAction = function(index, isShowing) {
+    /** @typedef {{lastScroll:Pick<HTMLElement,'scrollTop'|'scrollHeight'|'clientHeight'>}} LastScrollRecord */
+    /** @type {string} */
+    actionLogClearHTML;
+    /** @type {ResizeObserver} */
+    actionLogObserver;
+    initActionLog() {
+        const log = /** @type {HTMLElement & LastScrollRecord} */(document.getElementById("actionLog"));
+        this.actionLogClearHTML ??= log.innerHTML;
+        this.actionLogObserver = new ResizeObserver(entries => {
+            for (const entry of entries) {
+                if (entry.target !== log) continue;
+                // console.log(entry,entry.target,log,log.scrollTop,log.scrollHeight,log.clientHeight,log.lastScroll);
+                // check the most recent position of the scroll bottom
+                const {scrollTop, scrollHeight, clientHeight, lastScroll} = log;
+                const lastScrollBottom = lastScroll ? lastScroll.scrollHeight - (lastScroll.scrollTop + lastScroll.clientHeight) : 0;
+                // check the current position
+                const scrollBottom = scrollHeight - (scrollTop + clientHeight);
+                // shift by that delta
+                log.scrollTop += scrollBottom - lastScrollBottom;
+            }
+        });
+        this.actionLogObserver.observe(log);
+        log.addEventListener("scroll", this.recordScrollPosition, {passive: true});
+        log.addEventListener("scrollend", this.recordScrollPosition, {passive: true});
+    }
+    /** @this {HTMLElement & LastScrollRecord} */
+    recordScrollPosition() {
+        const {scrollTop, scrollHeight, clientHeight} = this;
+        this.lastScroll = {scrollTop, scrollHeight, clientHeight};
+    }
+    updateActionLogEntry(index) {
+        const log = document.getElementById("actionLog");
+        this.actionLogClearHTML ??= log.innerHTML;
+        if (index === "clear") {
+            log.innerHTML = this.actionLogClearHTML; // nuke it, dot it
+        }
+        const entry = actionLog.getEntry(index);
+        if (actionLog.hasPrevious()) {
+            log.classList.add("hasPrevious");
+        } else {
+            log.classList.remove("hasPrevious");
+        }
+        if (!entry) return;
+        let element = document.getElementById(`actionLogEntry${index}`);
+        if (element) {
+            entry.element = element;
+            entry.updateElement();
+        } else {
+            element = entry.createElement();
+            element.id = `actionLogEntry${index}`;
+            element.style.order = index;
+
+            const nextEntry = htmlElement(`actionLogEntry${index+1}`, false, false);
+            log.insertBefore(element, nextEntry ?? htmlElement("actionLogLatest"));
+        }
+        if ((actionLog.firstNewOrUpdatedEntry ?? Infinity) <= index) {
+            element.classList.add("highlight");
+            // this is just causing problems right now. disable, it's not all that important if scroll anchors work properly
+            // element.scrollIntoView({block: "nearest", inline: "nearest", behavior: "auto"});
+            setTimeout(() => element.classList.remove("highlight"), 1);
+        }
+    }
+
+    mouseoverAction(index, isShowing) {
         if (isShowing) curActionShowing = index;
         else curActionShowing = undefined;
         const div = document.getElementById(`action${index}Selected`);
         if (div) {
             div.style.opacity = isShowing ? "1" : "0";
-            document.getElementById(`actionTooltip${index}`).style.display = isShowing ? "inline-block" : "none";
+            document.getElementById(`actionTooltip${index}`).style.display = isShowing ? "" : "none";
         }
-        nextActionsDiv.style.display = isShowing ? "none" : "inline-block";
-        document.getElementById("actionTooltipContainer").style.display = isShowing ? "inline-block" : "none";
+        nextActionsDiv.style.display = isShowing ? "none" : "";
+        document.getElementById("actionTooltipContainer").style.display = isShowing ? "" : "none";
         view.updateCurrentActionBar(index);
     };
 
-    this.updateCurrentActionLoops = function(index) {
+    updateCurrentActionLoops(index) {
         const action = actions.current[index];
         if (action !== undefined) {
-            document.getElementById(`action${index}LoopsDone`).textContent = (action.loops - action.loopsLeft) > 99999 
+            document.getElementById(`action${index}LoopsDone`).textContent = (action.loops - action.loopsLeft) > 99999
                 ? toSuffix(action.loops - action.loopsLeft) : formatNumber(action.loops - action.loopsLeft);
             document.getElementById(`action${index}Loops`).textContent = action.loops > 99999 ? toSuffix(action.loops) : formatNumber(action.loops);
         }
     };
 
-    this.updateProgressAction = function(updateInfo) {
-        const varName = updateInfo.name;
-        const town = updateInfo.town;
-        const level = town.getLevel(varName);
-        const levelPrc = `${town.getPrcToNext(varName)}%`;
-        document.getElementById(`prc${varName}`).textContent = level;
-        document.getElementById(`expBar${varName}`).style.width = levelPrc;
+    /** @param {{name: string, town: Town}} updateInfo */
+    updateProgressAction({name: varName, town},
+                         level = town.getLevel(varName),
+                         levelPrc = `${town.getPrcToNext(varName)}%`,
+    ) {
+        document.getElementById(`prc${varName}`).textContent = `${level}`;
+        document.getElementById(`expBar${varName}`)?.style.setProperty("width", levelPrc);
         document.getElementById(`progress${varName}`).textContent = intToString(levelPrc, 2);
         document.getElementById(`bar${varName}`).style.width = `${level}%`;
+        if (varName.startsWith("Survey") && !varName.endsWith("Global")) {
+            this.updateGlobalSurvey(varName, town);
+        }
     };
 
-    this.updateProgressActions = function() {
+    updateGlobalSurvey(varName, town) {
+            const expToNext = getExploreExpToNextProgress();
+            const expSinceLast = getExploreExpSinceLastProgress();
+            this.updateProgressAction({name: `${varName}Global`, town}, getExploreProgress(), `${expSinceLast * 100 / (expSinceLast + expToNext)}%`);
+    };
+
+    updateProgressActions() {
         for (const town of towns) {
             for (let i = 0; i < town.progressVars.length; i++) {
                 const varName = town.progressVars[i];
@@ -620,7 +960,7 @@ function View() {
         }
     };
 
-    this.updateLockedHidden = function() {
+    updateLockedHidden() {
         for (const action of totalActionList) {
             const actionDiv = document.getElementById(`container${action.varName}`);
             const infoDiv = document.getElementById(`infoContainer${action.varName}`);
@@ -630,6 +970,9 @@ function View() {
             } else if (action.unlocked()) {
                 if (infoDiv) {
                     removeClassFromDiv(infoDiv, "hidden");
+                    if (action.varName.startsWith("Survey")) {
+                        removeClassFromDiv(document.getElementById(`infoContainer${action.varName}Global`), "hidden");
+                    }
                 }
                 removeClassFromDiv(actionDiv, "locked");
                 removeClassFromDiv(actionDiv, "capped");
@@ -637,6 +980,9 @@ function View() {
                 addClassToDiv(actionDiv, "locked");
                 if (infoDiv) {
                     addClassToDiv(infoDiv, "hidden");
+                    if (action.varName.startsWith("Survey")) {
+                        addClassToDiv(document.getElementById(`infoContainer${action.varName}Global`), "hidden");
+                    }
                 }
             }
             if (action.unlocked() && infoDiv) {
@@ -658,19 +1004,24 @@ function View() {
             }
         }
         if (totalActionList.filter(action => action.finish.toString().includes("handleSkillExp")).filter(action => action.unlocked()).length > 0) {
-            document.getElementById("skillList").style.display = "inline-block";
+            document.getElementById("skillList").style.display = "";
         } else {
             document.getElementById("skillList").style.display = "none";
         }
-        if (totalActionList.filter(action => action.finish.toString().includes("updateBuff")).filter(action => action.unlocked()).length > 0) {
-            document.getElementById("buffList").style.display = "flex";
+        if (totalActionList.filter(action => action.finish.toString().includes("updateBuff")).filter(action => action.unlocked()).length > 0 ||
+            prestigeValues["completedAnyPrestige"]) {
+            document.getElementById("buffList").style.display = "";
         } else {
             document.getElementById("buffList").style.display = "none";
         }
     };
 
-    this.updateStories = function(init) {
-        // ~1.56ms cost per run. run once every 2000ms on an interval
+    updateGlobalStory(num) {
+        actionLog.addGlobalStory(num);
+    }
+
+    updateStories(init) {
+        // several ms cost per run. run once every 2000ms on an interval
         for (const action of totalActionList) {
             if (action.storyReqs !== undefined) {
                 // greatly reduces/nullifies the cost of checking actions with all stories unlocked, which is nice,
@@ -679,27 +1030,37 @@ function View() {
                 if (init || document.getElementById(divName).innerHTML.includes("???")) {
                     let storyTooltipText = "";
                     let lastInBranch = false;
-                    const name = action.name.toLowerCase().replace(/ /gu, "_");
-                    const storyAmt = _txt(`actions>${name}`, "fallback").split("⮀").length - 1;
-                    let storiesUnlocked = 0;
-                    for (let i = 1; i <= storyAmt; i++) {
-                        const storyText = _txt(`actions>${name}>story_${i}`, "fallback").split("⮀");
-                        if (action.storyReqs(i)) {
-                            storyTooltipText += storyText[0] + storyText[1];
-                            lastInBranch = false;
-                            storiesUnlocked++;
-                        } else if (lastInBranch) {
-                            storyTooltipText += "<b>???:</b> ???";
-                        } else {
-                            storyTooltipText += `${storyText[0]} ???`;
-                            lastInBranch = true;
-                        }
-                        storyTooltipText += "<br>";
+                    let allStoriesForActionUnlocked = true;
+
+                    for (const {num: storyId, conditionHTML, text} of action.getStoryTexts()) {
+
+                            storyTooltipText += "<p>";
+                            if (action.storyReqs(storyId)) {
+                                storyTooltipText += conditionHTML + text;
+                                lastInBranch = false;
+                                if (action.visible() && action.unlocked() && completedActions.includes(action.varName)) {
+                                    actionLog.addActionStory(action, storyId, init);
+                                }
+                            } else {
+                                allStoriesForActionUnlocked = false;
+
+                                if (lastInBranch) {
+                                    storyTooltipText += "<b>???:</b> ???";
+                                } else {
+                                    storyTooltipText += `${conditionHTML} ???`;
+                                    lastInBranch = true;
+                                }
+                            }
+                            storyTooltipText += "</p>\n";
                     }
+
                     if (document.getElementById(divName).children[2].innerHTML !== storyTooltipText) {
                         document.getElementById(divName).children[2].innerHTML = storyTooltipText;
-                        if (!init) showNotification(divName);
-                        if (storiesUnlocked === storyAmt) {
+                        if (!init) {
+                            showNotification(divName);
+                            if (!unreadActionStories.includes(divName)) unreadActionStories.push(divName);
+                        }
+                        if (allStoriesForActionUnlocked) {
                             document.getElementById(divName).classList.add("storyContainerCompleted");
                         } else {
                             document.getElementById(divName).classList.remove("storyContainerCompleted");
@@ -710,19 +1071,19 @@ function View() {
         }
     };
 
-    this.showTown = function(townNum) {
+    showTown(townNum) {
         if (!towns[townNum].unlocked()) return;
 
         if (townNum === 0) {
             document.getElementById("townViewLeft").style.visibility = "hidden";
         } else {
-            document.getElementById("townViewLeft").style.visibility = "visible";
+            document.getElementById("townViewLeft").style.visibility = "";
         }
 
         if (townNum === Math.max(...townsUnlocked)) {
             document.getElementById("townViewRight").style.visibility = "hidden";
         } else {
-            document.getElementById("townViewRight").style.visibility = "visible";
+            document.getElementById("townViewRight").style.visibility = "";
         }
 
         for (let i = 0; i < actionOptionsTown.length; i++) {
@@ -730,56 +1091,69 @@ function View() {
             actionStoriesTown[i].style.display = "none";
             townInfos[i].style.display = "none";
         }
-        if (actionStoriesShowing) actionStoriesTown[townNum].style.display = "block";
-        else actionOptionsTown[townNum].style.display = "block";
-        townInfos[townNum].style.display = "block";
+        if (actionStoriesShowing) actionStoriesTown[townNum].style.display = "";
+        else actionOptionsTown[townNum].style.display = "";
+        townInfos[townNum].style.display = "";
         $("#TownSelect").val(townNum);
+        htmlElement("shortTownColumn").classList.remove(`zone-${townShowing+1}`);
+        htmlElement("shortTownColumn").classList.add(`zone-${townNum+1}`);
         document.getElementById("townDesc").textContent = _txt(`towns>town${townNum}>desc`);
         townShowing = townNum;
     };
 
-    this.showActions = function(stories) {
+    showActions(stories) {
         for (let i = 0; i < actionOptionsTown.length; i++) {
             actionOptionsTown[i].style.display = "none";
             actionStoriesTown[i].style.display = "none";
         }
 
         if (stories) {
-            document.getElementById("actionsViewLeft").style.visibility = "visible";
+            document.getElementById("actionsViewLeft").style.visibility = "";
             document.getElementById("actionsViewRight").style.visibility = "hidden";
-            actionStoriesTown[townShowing].style.display = "block";
+            actionStoriesTown[townShowing].style.display = "";
         } else {
             document.getElementById("actionsViewLeft").style.visibility = "hidden";
-            document.getElementById("actionsViewRight").style.visibility = "visible";
-            actionOptionsTown[townShowing].style.display = "block";
+            document.getElementById("actionsViewRight").style.visibility = "";
+            actionOptionsTown[townShowing].style.display = "";
         }
 
         document.getElementById("actionsTitle").textContent = _txt(`actions>title${(stories) ? "_stories" : ""}`);
         actionStoriesShowing = stories;
     };
 
-    this.updateRegular = function(updateInfo) {
+    toggleHiding() {
+        document.documentElement.classList.toggle("editing-hidden-vars");
+    }
+
+    toggleHidden(varName, force) {
+        const isHidden = towns[townShowing].hiddenVars.has(varName);
+        if ((isHidden && force !== true) || force === false) {
+            towns[townShowing].hiddenVars.delete(varName);
+            htmlElement(`infoContainer${varName}`).classList.remove("user-hidden");
+        } else if (!isHidden || force === true) {
+            towns[townShowing].hiddenVars.add(varName);
+            htmlElement(`infoContainer${varName}`).classList.add("user-hidden");
+        }
+    }
+
+    updateRegular(updateInfo) {
         const varName = updateInfo.name;
         const index = updateInfo.index;
         const town = towns[index];
-        document.getElementById(`total${varName}`).textContent = town[`total${varName}`];
-        document.getElementById(`checked${varName}`).textContent = town[`checked${varName}`];
-        document.getElementById(`unchecked${varName}`).textContent = town[`total${varName}`] - town[`checked${varName}`];
-        document.getElementById(`goodTemp${varName}`).textContent = town[`goodTemp${varName}`];
-        document.getElementById(`good${varName}`).textContent = town[`good${varName}`];
+        htmlElement(`total${varName}`).textContent = String(town[`total${varName}`]);
+        htmlElement(`checked${varName}`).textContent = String(town[`checked${varName}`]);
+        htmlElement(`unchecked${varName}`).textContent = String(town[`total${varName}`] - town[`checked${varName}`]);
+        htmlElement(`goodTemp${varName}`).textContent = String(town[`goodTemp${varName}`]);
+        htmlElement(`good${varName}`).textContent = String(town[`good${varName}`]);
     };
 
-    this.updateAddAmount = function(num) {
-        for (let i = 0; i < 6; i++) {
-            const elem = document.getElementById(`amount${num}`);
-            if (elem) {
-                addClassToDiv(elem, "unused");
-            }
+    updateAddAmount(amount) {
+        for (const elem of document.getElementsByClassName("change-amount")) {
+            elem.classList.toggle("unused", elem.textContent !== String(amount));
         }
-        if (num > 0) removeClassFromDiv(document.getElementById(`amount${num}`), "unused");
     };
 
-    this.updateLoadout = function(num) {
+    updateLoadout(num) {
         for (let i = 0; i < 16; i++) {
             const elem = document.getElementById(`load${i}`);
             if (elem) {
@@ -792,66 +1166,143 @@ function View() {
         }
     };
 
-    this.updateLoadoutNames = function() {
+    updateLoadoutNames() {
         for (let i = 0; i < loadoutnames.length; i++) {
             document.getElementById(`load${i + 1}`).textContent = loadoutnames[i];
         }
+        inputElement("renameLoadout").value = loadoutnames[curLoadout - 1];
     };
 
-    this.createTownActions = function() {
-        if (actionOptionsTown[0].firstChild) return;
-        for (const prop in Action) {
-            const action = Action[prop];
+    createTownActions() {
+        if (actionOptionsTown[0].querySelector(".actionOrTravelContainer")) return;
+        for (const action of towns.flatMap(t => t.totalActionList)) {
             this.createTownAction(action);
-            if (action.type === "limited") this.createTownInfo(action);
-            if (action.type === "progress") this.createActionProgress(action);
-            if (action.type === "multipart") this.createMultiPartPBar(action);
-            if (options.highlightNew) this.highlightIncompleteActions();
         }
+        for (const varName of towns.flatMap(t => t.allVarNames)) {
+            const action = totalActionList.find(a => a.varName === varName);
+            if (isActionOfType(action, "limited")) this.createTownInfo(action);
+            if (isActionOfType(action, "progress")) {
+                if (action.name.startsWith("Survey")) this.createGlobalSurveyProgress(action);
+                this.createActionProgress(action);
+            }
+            if (isActionOfType(action, "multipart")) this.createMultiPartPBar(action);
+        }
+        if (options.highlightNew) this.highlightIncompleteActions();
     };
 
-    this.createActionProgress = function(action) {
+    /** @param {ActionOfType<"progress">} action  */
+    createGlobalSurveyProgress(action) {
+        this.createActionProgress(action, "Global", action.labelGlobal, true);
+    }
+
+    /** @param {ActionOfType<"progress">} action @param {string} [label] */
+    createActionProgress(action, varSuffix="", label, includeExpBar=true) {
         const totalDivText =
-        `<div class='townStatContainer showthat'>
-            <div class='bold townLabel'>${action.labelDone} </div> <div id='prc${action.varName}'>5</div>%
-            <div class='thinProgressBarUpper'><div id='expBar${action.varName}' class='statBar townExpBar'></div></div>
-            <div class='thinProgressBarLower'><div id='bar${action.varName}' class='statBar townBar'></div></div>
+        Raw.html`<div class='townStatContainer showthat'>
+            <div class='bold townLabel'>${label ?? action.labelDone}</div>
+            <div class='progressValue' id='prc${action.varName}${varSuffix}'>5</div><div class='percentSign'>%</div>
+            <div class='progressBars'>
+                ${includeExpBar ? `<div class='thinProgressBarUpper'><div id='expBar${action.varName}${varSuffix}' class='statBar townExpBar'></div></div>` : ""}
+                <div class='thinProgressBarLower'><div id='bar${action.varName}${varSuffix}' class='statBar townBar'></div></div>
+            </div>
 
             <div class='showthis'>
                 ${_txt("actions>tooltip>higher_done_percent_benefic")}<br>
-                <div class='bold'>${_txt("actions>tooltip>progress_label")}</div> <div id='progress${action.varName}'></div>%
+                <div class='bold'>${_txt("actions>tooltip>progress_label")}</div> <div id='progress${action.varName}${varSuffix}'></div>%
             </div>
+            <div class='hideVarButton far' onclick='view.toggleHidden("${action.varName}${varSuffix}")'></div>
         </div>`;
         const progressDiv = document.createElement("div");
-        progressDiv.id = `infoContainer${action.varName}`;
-        progressDiv.style.display = "block";
+        progressDiv.className = "townContainer progressType";
+        progressDiv.id = `infoContainer${action.varName}${varSuffix}`;
+        progressDiv.style.display = "";
         progressDiv.innerHTML = totalDivText;
         townInfos[action.townNum].appendChild(progressDiv);
+        if (towns[action.townNum].hiddenVars.has(`${action.varName}${varSuffix}`)) {
+            progressDiv.classList.add("user-hidden");
+        }
     };
 
-    this.createTownAction = function(action) {
+    /** @param {AnyAction} action  */
+    createTownAction(action) {
         let actionStats = "";
         let actionSkills = "";
-        const statKeyNames = Object.keys(action.stats);
-        for (let i = 0; i < 9; i++) {
-            for (const stat of statKeyNames) {
-                if (statList[i] === stat) {
-                    const statLabel = _txt(`stats>${stat}>short_form`);
-                    actionStats += `<div class='bold'>${statLabel}:</div> ${action.stats[stat] * 100}%<br>`;
-                }
+        let skillDetails = "";
+        let lockedStats = "";
+        let lockedSkills = "";
+        const pieSlices = [];
+        const gradientStops=[];
+        const statEntries = typedEntries(action.stats);
+        // sort high to low, then by statname index
+        statEntries.sort(([aStat, aRatio], [bStat, bRatio]) => ((bRatio - aRatio) || (statList.indexOf(aStat) - statList.indexOf(bStat))));
+        let totalRatio = 0;
+        let gradientOffset = 0;
+        let lastArcPoint = [0, -1]; // start at 12 o'clock
+        for (const [stat, ratio] of statEntries) {
+            const statLabel = _txt(`stats>${stat}>short_form`);
+            actionStats += `<dt class='stat-${stat}'>${statLabel}</dt> <dd class='stat-${stat}'>${ratio * 100}%</dd>`;
+            const startRatio = totalRatio;
+            totalRatio += ratio;
+            if (totalRatio >= 0.999 && totalRatio <= 1.001) totalRatio = 1;
+            const midRatio = (startRatio + totalRatio) / 2;
+            const angle = Math.PI * 2 * totalRatio;
+            const arcPoint = [Math.sin(angle), -Math.cos(angle)];
+            pieSlices.push(`<path class='pie-slice stat-${stat}' d='M0,0 L${lastArcPoint.join()} A1,1 0,${ratio >= 0.5 ? 1 : 0},1 ${arcPoint.join()} Z' />`);
+            if (gradientStops.length === 0) {
+                gradientOffset = midRatio;
+                gradientStops.push(`from ${gradientOffset}turn`, `var(--stat-${stat}-color) calc(${gradientOffset}turn * var(--pie-ratio))`);
+            } else {
+                gradientStops.push(`var(--stat-${stat}-color) calc(${midRatio - gradientOffset}turn - (${ratio/2}turn * var(--pie-ratio))) calc(${midRatio - gradientOffset}turn + (${ratio/2}turn * var(--pie-ratio)))`);
             }
+            lastArcPoint = arcPoint;
         }
+        // this is *almost* always true (but not always)
+        if (statEntries.length > 0) {
+            gradientStops.push(`var(--stat-${statEntries[0][0]}-color) calc(1turn - (${gradientOffset}turn * var(--pie-ratio)))`)
+            const highestRatio = statEntries[0][1];
+            lockedStats = `(${statEntries.map(([stat, ratio]) => /** @type {const} */([ratio === highestRatio, stat, _txt(`stats>${stat}>short_form`)]))
+                                      .map(([isHighestStat, stat, label]) => `<span class='${isHighestStat?"bold":""} stat-${stat} stat-color'>${label}</span>`)
+                                      .join(", ")})<br>`;
+        }
+        const statPie = statEntries.length === 0 ? "" : `
+                <svg viewBox='-1 -1 2 2' class='stat-pie' id='stat-pie-${action.varName}'>
+                    <g id='stat-pie-${action.varName}-g'>
+                        ${pieSlices.join("")}
+                    </g>
+                </svg>
+                <div class='stat-pie mask' style='background:conic-gradient(${gradientStops.join()})'></div>`;
         if (action.skills !== undefined) {
-            const skillKeyNames = Object.keys(action.skills); 
+            const skillKeyNames = Object.keys(action.skills);
             const l = skillList.length;
             for (let i = 0; i < l; i++) {
                 for (const skill of skillKeyNames) {
                     if (skillList[i] === skill) {
-                        const skillLabel = `${_txt(`skills>${getXMLName(skill)}>label`)} ${_txt("stats>tooltip>exp")}`;
+                        const xmlName = getXMLName(skill);
+                        const skillLabel = `${_txt(`skills>${xmlName}>label`)} ${_txt("stats>tooltip>exp")}`;
                         actionSkills += `<div class='bold'>${skillLabel}:</div><span id='expGain${action.varName}${skill}'></span><br>`;
+                        if (action.teachesSkill(skill)) {
+                            const learnSkill = `<div class='bold'>${_txt("actions>tooltip>learn_skill")}:</div>`;
+                            lockedSkills += `${learnSkill} <span>${_txt(`skills>${xmlName}>label`)}</span><br>`;
+                            skillDetails +=
+                                `<hr>
+                                ${learnSkill} <div class='bold underline'>${_txt(`skills>${xmlName}>label`)}</div><br>
+                                <i>${_txt(`skills>${xmlName}>desc`)}</i><br>`;
+                            if (_txtsObj(`skills>${xmlName}>desc2`)?.length > 0) {
+                                skillDetails += `${_txt(`skills>${xmlName}>desc2`).replace(/<br>\s*Currently.*(?:<br>|$)/sgi, "") }<br>`; // ugh
+                            }
+                        }
                     }
                 }
             }
+        }
+        if (isBuffName(action.grantsBuff)) {
+            const xmlName = getXMLName(Buff.fullNames[action.grantsBuff]);
+            const grantsBuff = `<div class='bold'>${_txt("actions>tooltip>grants_buff")}:</div>`;
+            lockedSkills += `${grantsBuff} <span>${_txt(`buffs>${xmlName}>label`)}</span><br>`;
+            skillDetails +=
+                `<hr>
+                ${grantsBuff} <div class='bold underline'>${_txt(`buffs>${xmlName}>label`)}</div><br>
+                <i>${_txt(`buffs>${xmlName}>desc`)}</i><br>`;
         }
         let extraImage = "";
         const extraImagePositions = ["margin-top:17px;margin-left:5px;", "margin-top:17px;margin-left:-55px;", "margin-top:0px;margin-left:-55px;", "margin-top:0px;margin-left:5px;"];
@@ -860,13 +1311,15 @@ function View() {
                 extraImage += `<img src='img/${camelize(action.affectedBy[i])}.svg' class='smallIcon' draggable='false' style='position:absolute;${extraImagePositions[i]}'>`;
             }
         }
-        const isTravel = getTravelNum(action.name) > 0;
-        const divClass = isTravel ? "travelContainer showthat" : "actionContainer showthat";
+        const isTravel = getTravelNum(action.name) != 0;
+        const divClass = `${isTravel ? "travelContainer" : "actionContainer"} ${isTraining(action.name) || hasLimit(action.name) ? "cappableActionContainer" : ""}`;
         const imageName = action.name.startsWith("Assassin") ? "assassin" : camelize(action.name);
+        const unlockConditions = /<br>\s*Unlocked (.*?)(?:<br>|$)/is.exec(`${action.tooltip}${action.goldCost === undefined ? "" : action.tooltip2}`)?.[1]; // I hate this but wygd
+        const lockedText = unlockConditions ? `${_txt("actions>tooltip>locked_tooltip")}<br>Will unlock ${unlockConditions}` : `${action.tooltip}${action.goldCost === undefined ? "" : action.tooltip2}`;
         const totalDivText =
-            `<div
+            `<button
                 id='container${action.varName}'
-                class='${divClass}'
+                class='${divClass} actionOrTravelContainer ${action.type}ActionContainer showthat'
                 draggable='true'
                 ondragover='handleDragOver(event)'
                 ondragstart='handleDirectActionDragStart(event, "${action.name}", ${action.townNum}, "${action.varName}", false)'
@@ -875,47 +1328,53 @@ function View() {
                 onmouseover='view.updateAction("${action.varName}")'
                 onmouseout='view.updateAction(undefined)'
             >
-                ${action.label}<br>
+                <label>${action.label}</label><br>
                 <div style='position:relative'>
                     <img src='img/${imageName}.svg' class='superLargeIcon' draggable='false'>${extraImage}
                 </div>
-                <div class='showthis' draggable='false'>
+                ${statPie}
+                <div class='showthis when-unlocked' draggable='false'>
                     ${action.tooltip}<span id='goldCost${action.varName}'></span>
                     ${(action.goldCost === undefined) ? "" : action.tooltip2}
                     <br>
                     ${actionSkills}
-                    ${actionStats}
                     <div class='bold'>${_txt("actions>tooltip>mana_cost")}:</div> <div id='manaCost${action.varName}'>${formatNumber(action.manaCost())}</div><br>
+                    <dl class='action-stats'>${actionStats}</dl>
                     <div class='bold'>${_txt("actions>tooltip>exp_multiplier")}:</div><div id='expMult${action.varName}'>${action.expMult * 100}</div>%<br>
+                    ${skillDetails}
                 </div>
-            </div>`;
+                <div class='showthis when-locked' draggable='false'>
+                    ${lockedText}
+                    <br>
+                    ${lockedSkills}
+                    ${lockedStats}
+                </div>
+            </button>`;
 
         const actionsDiv = document.createElement("div");
         actionsDiv.innerHTML = totalDivText;
-        if (isTravel) actionsDiv.style.width = "100%";
-        actionOptionsTown[action.townNum].appendChild(actionsDiv);
+        actionOptionsTown[action.townNum].querySelector(`:scope > .${isTravel ? "travelDiv" : "actionDiv"}`).appendChild(actionsDiv);
 
         if (action.storyReqs !== undefined) {
             let storyTooltipText = "";
             let lastInBranch = false;
-            const storyAmt = _txt(`actions>${action.name.toLowerCase().replace(/ /gu, "_")}`, "fallback").split("⮀").length - 1;
-            for (let i = 1; i <= storyAmt; i++) {
-                if (_txt(`actions>${action.name.toLowerCase().replace(/ /gu, "_")}>story_${i}`) === undefined) console.log(`actions>${action.name.toLowerCase().replace(/ /gu, "_")}>story_${i}`);
-                const storyText = _txt(`actions>${action.name.toLowerCase().replace(/ /gu, "_")}>story_${i}`, "fallback").split("⮀");
-                if (action.storyReqs(i)) {
-                    storyTooltipText += storyText[0] + storyText[1];
-                    lastInBranch = false;
-                } else if (lastInBranch) {
-                    storyTooltipText += "<b>???:</b> ???";
-                } else {
-                    storyTooltipText += `${storyText[0]} ???`;
-                    lastInBranch = true;
-                }
-                storyTooltipText += "<br>";
+
+            for (const {num: storyId, conditionHTML, text} of action.getStoryTexts()) {
+                    storyTooltipText += "<p>";
+                    if (action.storyReqs(storyId)) {
+                        storyTooltipText += conditionHTML + text;
+                        lastInBranch = false;
+                    } else if (lastInBranch) {
+                        storyTooltipText += "<b>???:</b> ???";
+                    } else {
+                        storyTooltipText += `${conditionHTML} ???`;
+                        lastInBranch = true;
+                    }
+                    storyTooltipText += "</p>";
             }
-    
+
             const storyDivText =
-                `<div id='storyContainer${action.varName}' class='storyContainer showthat' draggable='false' onmouseover='hideNotification("storyContainer${action.varName}")'>${action.label}
+                `<div id='storyContainer${action.varName}' tabindex='0' class='storyContainer showthatstory' draggable='false' onmouseover='hideNotification("storyContainer${action.varName}")'>${action.label}
                     <br>
                     <div style='position:relative'>
                         <img src='img/${camelize(action.name)}.svg' class='superLargeIcon' draggable='false'>
@@ -925,71 +1384,86 @@ function View() {
                         ${storyTooltipText}
                     </div>
                 </div>`;
-    
+
             const storyDiv = document.createElement("div");
             storyDiv.innerHTML = storyDivText;
             actionStoriesTown[action.townNum].appendChild(storyDiv);
         }
     };
 
-    this.updateAction = function(action) {
+    updateAction(action) {
         if (action === undefined) return
         let container = document.getElementById(`container${action}`);
         this.adjustTooltipPosition(container.querySelector("div.showthis"));
     }
 
-    this.adjustManaCost = function(actionName) {
+    adjustManaCost(actionName) {
         const action = translateClassNames(actionName);
         document.getElementById(`manaCost${action.varName}`).textContent = formatNumber(action.manaCost());
     };
 
-    this.adjustExpMult = function(actionName) {
+    adjustExpMult(actionName) {
         const action = translateClassNames(actionName);
         document.getElementById(`expMult${action.varName}`).textContent = formatNumber(action.expMult * 100);
     };
 
-    this.adjustGoldCost = function(updateInfo) {
+    goldCosts = {};
+
+    adjustGoldCost(updateInfo) {
         const varName = updateInfo.varName;
         const amount = updateInfo.cost;
-        document.getElementById(`goldCost${varName}`).textContent = formatNumber(amount);
+        const element = document.getElementById(`goldCost${varName}`);
+        if (this.goldCosts[varName] !== amount && element) {
+            element.textContent = formatNumber(amount);
+            this.goldCosts[varName] = amount;
+        }
     };
-    this.adjustGoldCosts = function() {
+    adjustGoldCosts() {
         for (const action of actionsWithGoldCost) {
             this.adjustGoldCost({varName: action.varName, cost: action.goldCost()});
         }
     };
-    this.adjustExpGain = function(action) {
+    adjustExpGain(action) {
         for (const skill in action.skills) {
             if (Number.isInteger(action.skills[skill])) document.getElementById(`expGain${action.varName}${skill}`).textContent = ` ${action.skills[skill].toFixed(0)}`;
             else document.getElementById(`expGain${action.varName}${skill}`).textContent = ` ${action.skills[skill]().toFixed(0)}`;
         }
     };
-    this.adjustExpGains = function() {
+    adjustExpGains() {
         for (const action of totalActionList) {
             if (action.skills) this.adjustExpGain(action);
         }
     };
 
-    this.createTownInfo = function(action) {
+    /** @param {ActionOfType<"limited">} action  */
+    createTownInfo(action) {
         const totalInfoText =
-            `<div class='townInfoContainer showthat'>
+            // important that there be 8 element children of townInfoContainer (excluding the showthis popup and hideVarButton)
+            Raw.html`
+            <div class='townInfoContainer showthat'>
                 <div class='bold townLabel'>${action.labelDone}</div>
-                <div id='goodTemp${action.varName}'>0</div> <i class='fa fa-arrow-left'></i>
-                <div id='good${action.varName}'>0</div> <i class='fa fa-arrow-left'></i>
-                <div id='unchecked${action.varName}'>0</div>
+                <div class='numeric goodTemp' id='goodTemp${action.varName}'>0</div> <i class='fa fa-arrow-left'></i>
+                <div class='numeric good' id='good${action.varName}'>0</div> <i class='fa fa-arrow-left'></i>
+                <div class='numeric unchecked' id='unchecked${action.varName}'>0</div>
                 <input type='checkbox' id='searchToggler${action.varName}' style='margin-left:10px;'>
                 <label for='searchToggler${action.varName}'> Lootable first</label>
                 <div class='showthis'>${action.infoText()}</div>
+                <div class='hideVarButton far' onclick='view.toggleHidden("${action.varName}")'></div>
             </div><br>`;
 
         const infoDiv = document.createElement("div");
+        infoDiv.className = "townContainer infoType";
         infoDiv.id = `infoContainer${action.varName}`;
-        infoDiv.style.display = "block";
+        infoDiv.style.display = "";
         infoDiv.innerHTML = totalInfoText;
         townInfos[action.townNum].appendChild(infoDiv);
+        if (towns[action.townNum].hiddenVars.has(action.varName)) {
+            infoDiv.classList.add("user-hidden");
+        }
     };
 
-    this.createMultiPartPBar = function(action) {
+    /** @param {ActionOfType<"multipart">} action  */
+    createMultiPartPBar(action) {
         let pbars = "";
         const width = `style='width:calc(${91 / action.segments}% - 4px)'`;
         const varName = action.varName;
@@ -1009,26 +1483,37 @@ function View() {
         else if (varName === "LDungeon") mouseOver = "onmouseover='view.showDungeon(1)' onmouseout='view.showDungeon(undefined)'";
         else if (varName === "TheSpire") mouseOver = "onmouseover='view.showDungeon(2)' onmouseout='view.showDungeon(undefined)'";
         const totalDivText =
-            `<div class='townStatContainer' style='text-align:center' id='infoContainer${varName}'>
-                <div class='bold townLabel' style='float:left' id='multiPartName${varName}'></div>
-                <div class='completedInfo showthat' ${mouseOver}>
-                    <div class='bold'>${action.labelDone}</div>
-                    <div id='completed${varName}'></div>
-                    ${completedTooltip === "" ? "" : `<div class='showthis' id='completedContainer${varName}'>
-                        ${completedTooltip}
-                    </div>`}
+            Raw.html`
+            <div class='townStatContainer' id='infoContainer${varName}'>
+                <div class='multipartLabel'>
+                    <div class='flexMargin'></div>
+                    <div class='bold townLabel' id='multiPartName${varName}'></div>
+                    <div class='completedInfo showthat' ${mouseOver}>
+                        <div class='bold'>${action.labelDone}</div>
+                        <div id='completed${varName}'></div>
+                        ${completedTooltip === "" ? "" : `<div class='showthis' id='completedContainer${varName}'>
+                            ${completedTooltip}
+                        </div>`}
+                    </div>
+                    <div class='flexMargin'></div>
                 </div>
-                <br>
-                ${pbars}
+                <div class='multipartBars'>
+                    ${pbars}
+                </div>
+                <div class='hideVarButton far' onclick='view.toggleHidden("${action.varName}")'></div>
             </div>`;
 
         const progressDiv = document.createElement("div");
-        progressDiv.style.display = "block";
+        progressDiv.className = "townContainer multipartType";
+        progressDiv.style.display = "";
         progressDiv.innerHTML = totalDivText;
         townInfos[action.townNum].appendChild(progressDiv);
+        if (towns[action.townNum].hiddenVars.has(action.varName)) {
+            progressDiv.firstElementChild.classList.add("user-hidden");
+        }
     };
 
-    this.updateMultiPartActions = function() {
+    updateMultiPartActions() {
         for (const action of totalActionList) {
             if (action.type === "multipart") {
                 this.updateMultiPart(action);
@@ -1036,8 +1521,8 @@ function View() {
             }
         }
     };
-    
-    this.updateMultiPartSegments = function(action) {
+
+    updateMultiPartSegments(action) {
         let segment = 0;
         let curProgress = towns[action.townNum][action.varName];
         // update previous segments
@@ -1072,12 +1557,12 @@ function View() {
         }
     };
 
-    this.showDungeon = function(index) {
+    showDungeon(index) {
         dungeonShowing = index;
         if (index !== undefined) this.updateSoulstoneChance(index);
     };
 
-    this.updateSoulstoneChance = function(index) {
+    updateSoulstoneChance(index) {
         const dungeon = dungeons[index];
         for (let i = 0; i < dungeon.length; i++) {
             const level = dungeon[i];
@@ -1087,18 +1572,18 @@ function View() {
         }
     };
 
-    this.updateTrials = function() {
+    updateTrials() {
         for(let i = 0; i < trials.length; i++)
         {
             this.updateTrialInfo({trialNum: i, curFloor: 0});
         }
     };
 
-    this.updateTrialInfo = function(updateInfo) {
+    updateTrialInfo(updateInfo) {
         const curFloor = updateInfo.curFloor;
         const trialNum = updateInfo.trialNum;
         const trial = trials[trialNum];
-            document.getElementById(`trial${trialNum}HighestFloor`).textContent = trial.highestFloor + 1;
+            document.getElementById(`trial${trialNum}HighestFloor`).textContent = String(trial.highestFloor + 1);
             if (curFloor >= trial.length) {
                 document.getElementById(`trial${trialNum}CurFloor`).textContent = "";
                 document.getElementById(`trial${trialNum}CurFloorCompleted`).textContent = "";
@@ -1113,21 +1598,36 @@ function View() {
             }
     };
 
-    this.updateSoulstones = function() {
+    updateSoulstones() {
+        let total = 0;
         for (const stat of statList) {
             if (stats[stat].soulstone) {
-                document.getElementById(`ss${stat}Container`).style.display = "inline-block";
-                document.getElementById(`ss${stat}`).textContent = intToString(stats[stat].soulstone, 1);
-                document.getElementById(`stat${stat}SSBonus`).textContent = intToString(stats[stat].soulstone ? calcSoulstoneMult(stats[stat].soulstone) : 0);
+                total += stats[stat].soulstone;
+                htmlElement(`stat${stat}SoulstoneLogBar`).parentElement.style.display = "";
+                this.updateLevelLogBar("statsContainer", `stat${stat}SoulstoneLogBar`, stats[stat].soulstone);
+                document.getElementById(`ss${stat}Container`).style.display = "";
+                document.getElementById(`ss${stat}`).textContent = formatNumber(stats[stat].soulstone);
+                document.getElementById(`stat${stat}SSBonus`).textContent = intToString(stats[stat].soulstone ? stats[stat].soulstoneMult : 0);
                 document.getElementById(`stat${stat}ss`).textContent = intToString(stats[stat].soulstone, 1);
             } else {
+                htmlElement(`stat${stat}SoulstoneLogBar`).parentElement.style.display = "none";
                 document.getElementById(`ss${stat}Container`).style.display = "none";
                 document.getElementById(`stat${stat}ss`).textContent = "";
             }
         }
+        if (total > 0) {
+            document.getElementById(`stattotalss`).style.display = "";
+            document.getElementById(`stattotalss`).textContent = intToString(total, 1);
+            document.getElementById(`sstotalContainer`).style.display = "";
+            document.getElementById(`sstotal`).textContent = formatNumber(total);
+        } else {
+            document.getElementById(`stattotalss`).style.display = "none";
+            document.getElementById(`stattotalss`).textContent = "";
+            document.getElementById(`sstotalContainer`).style.display = "none";
+        }
     };
 
-    this.updateMultiPart = function(action) {
+    updateMultiPart(action) {
         const town = towns[action.townNum];
         document.getElementById(`multiPartName${action.varName}`).textContent = action.getPartName();
         document.getElementById(`completed${action.varName}`).textContent = ` ${formatNumber(town[`total${action.varName}`])}`;
@@ -1138,36 +1638,36 @@ function View() {
             }
             const mainStat = action.loopStats[(town[`${action.varName}LoopCounter`] + i) % action.loopStats.length];
             document.getElementById(`mainStat${i}${action.varName}`).textContent = _txt(`stats>${mainStat}>short_form`);
-            addStatColors(expBar, mainStat);
+            addStatColors(expBar, mainStat, true);
             document.getElementById(`segmentName${i}${action.varName}`).textContent = action.getSegmentName(town[`${action.varName}LoopCounter`] + i);
         }
     };
 
-    this.updateTrainingLimits = function() {
+    updateTrainingLimits() {
         for (let i = 0; i < statList.length; i++) {
             const trainingDiv = document.getElementById(`trainingLimit${statList[i]}`);
             if (trainingDiv) {
-                trainingDiv.textContent = trainingLimits;
+                trainingDiv.textContent = String(trainingLimits);
             }
         }
         if (getBuffLevel("Imbuement") > 0 || getBuffLevel("Imbuement3") > 0) document.getElementById("maxTraining").style.display = "";
     };
 
     // when you mouseover Story
-    this.updateStory = function(num) {
+    updateStory(num) {
         document.getElementById("newStory").style.display = "none";
         if (num <= 0) {
             num = 0;
             document.getElementById("storyLeft").style.visibility = "hidden";
         } else {
-            document.getElementById("storyLeft").style.visibility = "visible";
+            document.getElementById("storyLeft").style.visibility = "";
         }
 
         if (num >= storyMax) {
             num = storyMax;
             document.getElementById("storyRight").style.visibility = "hidden";
         } else {
-            document.getElementById("storyRight").style.visibility = "visible";
+            document.getElementById("storyRight").style.visibility = "";
         }
         //Hard coded story count - need to fix this
         for (let i = 0; i <= 12; i++) {
@@ -1177,45 +1677,44 @@ function View() {
             }
         }
         storyShowing = num;
-        document.getElementById("storyPage").textContent = storyShowing + 1;
+        document.getElementById("storyPage").textContent = String(storyShowing + 1);
         document.getElementById(`story${num}`).style.display = "inline-block";
     };
 
-    this.changeStatView = function() {
-        const statContainer = document.getElementById("statContainer");
-        if (document.getElementById("regularStats").checked) {
-            document.getElementById("radarChart").style.display = "none";
-            statContainer.style.position = "relative";
-            for (const node of statContainer.childNodes) {
-                removeClassFromDiv(node, "statRadarContainer");
-                addClassToDiv(node, "statRegularContainer");
-                node.children[0].style.display = "inline-block";
-            }
-            document.getElementById("statsColumn").style.width = "316px";
+    changeStatView() {
+        const statsWindow = document.getElementById("statsWindow");
+        if (inputElement("regularStats").checked) {
+            statsWindow.dataset.view = "regular";
         } else {
-            document.getElementById("radarChart").style.display = "inline-block";
-            statContainer.style.position = "absolute";
-            for (const node of statContainer.childNodes) {
-                addClassToDiv(node, "statRadarContainer");
-                removeClassFromDiv(node, "statRegularContainer");
-                node.children[0].style.display = "none";
-            }
-            document.getElementById("statsColumn").style.width = "410px";
+            statsWindow.dataset.view = "radar";
             statGraph.update();
         }
     };
 
-    this.changeTheme = function(init) {
-        if (init) document.getElementById("themeInput").value = options.theme;
-        options.theme = document.getElementById("themeInput").value;
-        document.getElementById("theBody").className = `t-${options.theme}`;
+    changeTheme(init) {
+        const themeInput = selectElement("themeInput");
+        const themeVariantInput = selectElement("themeVariantInput");
+        if (init) themeInput.value = options.theme;
+        if (init) themeVariantInput.value = options.themeVariant;
+        options.theme = themeInput.value;
+        options.themeVariant = themeVariantInput.value;
+        const variants = $(themeVariantInput).find(`.variant-${options.theme.replaceAll(" ","_")}`);
+        if (variants.length) {
+            document.getElementById("themeVariantSection").style.display = "";
+            $(themeVariantInput).find("option").css("display", "none");
+            variants.css("display", "");
+        } else {
+            document.getElementById("themeVariantSection").style.display = "none";
+        }
+        document.getElementById("theBody").className = `t-${options.theme} ${options.themeVariant}`;
+        localStorage["latestTheme"] = `${options.theme} ${options.themeVariant}`;
     };
 
-    this.createTravelMenu = function() {
+    createTravelMenu() {
         let travelMenu = $("#TownSelect");
         travelMenu.empty()
-        townNames.forEach((town, index) => {           
-            travelMenu.append("<option value="+index+" hidden=''>"+town+"</option>");
+        townNames.forEach((town, index) => {
+            travelMenu.append(`"<option value=${index} class='zone-${index+1}' hidden=''>${town}</option>`);
         });
         travelMenu.change(function() {
             view.showTown(Number($(this).val()));
@@ -1223,14 +1722,14 @@ function View() {
         this.updateTravelMenu()
     }
 
-    this.updateTravelMenu = function() {
+    updateTravelMenu() {
         let travelOptions = $("#TownSelect").children();
         for (let i=0;i<travelOptions.length;i++) {
             travelOptions[i].hidden=(!townsUnlocked.includes(i));
         }
     }
 
-    this.adjustDarkRitualText = function() {
+    adjustDarkRitualText() {
         let DRdesc = document.getElementById("DRText");
         DRdesc.innerHTML = `Actions are:<br>`;
         townsUnlocked.forEach(townNum => {
@@ -1239,7 +1738,7 @@ function View() {
         if(getBuffLevel("Ritual") > 200) DRdesc.innerHTML += DarkRitualDescription[9];
     }
 
-    this.highlightIncompleteActions = function() {
+    highlightIncompleteActions() {
         let actionDivs = Array.from(document.getElementsByClassName("actionContainer"));
         actionDivs.forEach(div => {
             let actionName = div.id.replace("container","");
@@ -1248,18 +1747,87 @@ function View() {
         });
     }
 
-    this.removeAllHighlights = function() {
+    removeAllHighlights() {
         let actionDivs = Array.from(document.getElementsByClassName("actionHighlight"));
         actionDivs.forEach(div => {
             div.classList.remove("actionHighlight");
         });
     }
 
-    this.updateTotals = function() {
+    updateTotals() {
         document.getElementById('totalPlaytime').textContent = `${formatTime(totals.time)}`;
         document.getElementById('totalEffectiveTime').textContent = `${formatTime(totals.effectiveTime)}`;
+        document.getElementById('borrowedTimeBalance').textContent = formatTime(totals.borrowedTime);
+        document.getElementById('borrowedTimeDays').textContent = `${formatNumber(Math.floor(totals.borrowedTime / 86400))}${_txt("time_controls>days")}`;
         document.getElementById('totalLoops').textContent = `${formatNumber(totals.loops)}`;
         document.getElementById('totalActions').textContent = `${formatNumber(totals.actions)}`;
+        if (totals.borrowedTime > 0) document.documentElement.classList.add("time-borrowed");
+        else document.documentElement.classList.remove("time-borrowed");
+    }
+
+    updatePrestigeValues() {
+        document.getElementById('currentPrestigePoints').textContent = `${formatNumber(prestigeValues["prestigeCurrentPoints"])}`;
+        document.getElementById('currentPrestigesCompleted').textContent = `${formatNumber(prestigeValues["prestigeTotalCompletions"])}`;
+        // document.getElementById('maxTotalImbueSoulLevels').textContent = `${formatNumber(prestigeValues["prestigeTotalCompletions"])}`;
+        document.getElementById('maxTotalImbueSoulLevels').textContent = `${formatNumber(Math.min(prestigeValues["prestigeTotalCompletions"], 7))}`;
+
+        document.getElementById('totalPrestigePoints').textContent = `${formatNumber(prestigeValues["prestigeTotalPoints"])}`;
+
+        document.getElementById('prestigePhysicalCurrentBonus').textContent = `${formatNumber(getPrestigeCurrentBonus("PrestigePhysical"))}`;
+        document.getElementById('prestigeMentalCurrentBonus').textContent = `${formatNumber(getPrestigeCurrentBonus("PrestigeMental"))}`;
+        document.getElementById('prestigeCombatCurrentBonus').textContent = `${formatNumber(getPrestigeCurrentBonus("PrestigeCombat"))}`;
+        document.getElementById('prestigeSpatiomancyCurrentBonus').textContent = `${formatNumber(getPrestigeCurrentBonus("PrestigeSpatiomancy"))}`;
+        document.getElementById('prestigeChronomancyCurrentBonus').textContent = `${formatNumber(getPrestigeCurrentBonus("PrestigeChronomancy"))}`;
+        document.getElementById('prestigeBarteringCurrentBonus').textContent = `${formatNumber(getPrestigeCurrentBonus("PrestigeBartering"))}`;
+        document.getElementById('prestigeExpOverflowCurrentBonus').textContent = `${formatNumber(getPrestigeCurrentBonus("PrestigeExpOverflow") * 10)}`;
+
+        document.getElementById('prestigePhysicalNextCost').textContent = `${formatNumber(getPrestigeCost("PrestigePhysical"))}`;
+        document.getElementById('prestigeMentalNextCost').textContent = `${formatNumber(getPrestigeCost("PrestigeMental"))}`;
+        document.getElementById('prestigeCombatNextCost').textContent = `${formatNumber(getPrestigeCost("PrestigeCombat"))}`;
+        document.getElementById('prestigeSpatiomancyNextCost').textContent = `${formatNumber(getPrestigeCost("PrestigeSpatiomancy"))}`;
+        document.getElementById('prestigeChronomancyNextCost').textContent = `${formatNumber(getPrestigeCost("PrestigeChronomancy"))}`;
+        document.getElementById('prestigeBarteringNextCost').textContent = `${formatNumber(getPrestigeCost("PrestigeBartering"))}`;
+        document.getElementById('prestigeExpOverflowNextCost').textContent = `${formatNumber(getPrestigeCost("PrestigeExpOverflow"))}`;
+    }
+}
+
+function startRenameCloudSave(fileId) {
+    const li = document.getElementById(`cloud_save_${fileId}`);
+    const nameInput = li?.querySelector(".cloud_save_name");
+    if (!nameInput) return;
+    if (nameInput instanceof HTMLInputElement) {
+        if (!nameInput.value || nameInput.value === li.dataset.fileName) {
+            const div = document.createElement("div");
+            div.className = nameInput.className;
+            div.textContent = li.dataset.fileName;
+            div.title = li.dataset.fileName;
+            li.replaceChild(div, nameInput);
+        } else {
+            googleCloud.renameFile(fileId, nameInput.value);
+        }
+    } else {
+        const input = document.createElement("input");
+        input.className = nameInput.className;
+        input.style.width = `${nameInput.clientWidth}px`;
+        input.value = li.dataset.fileName;
+        input.onkeydown = (e) => e.key === "Enter" ? (startRenameCloudSave(fileId), false) : true;
+        li.replaceChild(input, nameInput);
+        input.focus();
+    }
+}
+
+async function askDeleteCloudSave(fileId) {
+    const li = document.getElementById(`cloud_save_${fileId}`);
+    const button = li?.querySelector(".button.cloud_delete");
+    if (!button) return;
+    if (button.classList.contains("warning")) {
+        googleCloud.deleteFile(fileId);
+    } else {
+        button.textContent = _txt("menu>save>confirm_button");
+        button.classList.add("warning");
+        await delay(3000);
+        button.classList.remove("warning");
+        button.textContent = _txt("menu>save>delete_button");
     }
 }
 
@@ -1267,11 +1835,40 @@ function unlockGlobalStory(num) {
     if (num > storyMax) {
         document.getElementById("newStory").style.display = "inline-block";
         storyMax = num;
+        view.requestUpdate("updateGlobalStory", num);
     }
 }
 
-function unlockStory(name) {
-    if (!storyReqs[name]) storyReqs[name] = true;
+/** @param {StoryFlagName} name  */
+function setStoryFlag(name) {
+    if (!storyFlags[name]) {
+        storyFlags[name] = true;
+        if (options.actionLog) view.requestUpdate("updateStories", false);
+    }
+}
+const unlockStory = setStoryFlag; // compatibility alias
+
+/** @param {StoryVarName} name @param {number} value */
+function increaseStoryVarTo(name, value) {
+    if (storyVars[name] < value) {
+        storyVars[name] = value;
+        if (options.actionLog) view.requestUpdate("updateStories", false);
+    }
+}
+
+function scrollToPanel(event, target) {
+    event.preventDefault();
+    const element = document.getElementById(target);
+    const main = document.getElementById("main");
+
+    if (element instanceof HTMLElement && main) {
+        main.scroll({
+            behavior: "smooth",
+            left: element.offsetLeft,
+        });
+    }
+
+    return false;
 }
 
 const curActionsDiv = document.getElementById("curActionsList");
@@ -1281,29 +1878,21 @@ const actionStoriesTown = [];
 const townInfos = [];
 for (let i = 0; i <= 8; i++) {
     actionOptionsTown[i] = document.getElementById(`actionOptionsTown${i}`);
+    actionOptionsTown[i].append(Rendered.html`<div class="actionDiv"></div><div class="travelDiv">`);
     actionStoriesTown[i] = document.getElementById(`actionStoriesTown${i}`);
     townInfos[i] = document.getElementById(`townInfo${i}`);
 }
 
-function addStatColors(theDiv, stat) {
-    if (stat === "Str") {
-        theDiv.style.backgroundColor = "#d70037";
-    } else if (stat === "Dex") {
-        theDiv.style.backgroundColor = "#9fd430";
-    } else if (stat === "Con") {
-        theDiv.style.backgroundColor = "#b06f37";
-    } else if (stat === "Per") {
-        theDiv.style.backgroundColor = "#4ce2e9";
-    } else if (stat === "Int") {
-        theDiv.style.backgroundColor = "#2640b2";
-    } else if (stat === "Cha") {
-        theDiv.style.backgroundColor = "#F48FB1";
-    } else if (stat === "Spd") {
-        theDiv.style.backgroundColor = "#f6e300";
-    } else if (stat === "Luck") {
-        theDiv.style.backgroundColor = "#3feb53";
-    } else if (stat === "Soul") {
-        theDiv.style.backgroundColor = "#AB47BC";
+/** @param {Element} theDiv @param {StatName} stat  */
+function addStatColors(theDiv, stat, forceColors=false) {
+    for (const className of Array.from(theDiv.classList)) {
+        if (className.startsWith("stat-") && className.slice(5) in stats) {
+            theDiv.classList.remove(className);
+        }
+    }
+    theDiv.classList.add(`stat-${stat}`, "stat-background");
+    if (forceColors) {
+        theDiv.classList.add("use-stat-colors");
     }
 }
 
@@ -1325,45 +1914,28 @@ function draggedUndecorate(i) {
 }
 
 function adjustActionListSize(amt) {
-    if (document.getElementById("expandableList").style.height === "" && amt > 0) {
-        document.getElementById("expandableList").style.height = `${500 + amt}px`;
-        curActionsDiv.style.maxHeight = `${457 + amt}px`;
-        nextActionsDiv.style.maxHeight = `${457 + amt}px`;
-    } else if (document.getElementById("expandableList").style.height === "" && amt === -100) {
-        document.getElementById("expandableList").style.height = "500px";
-        curActionsDiv.style.maxHeight = "457px";
-        nextActionsDiv.style.maxHeight = "457px";
+    let height = document.documentElement.style.getPropertyValue("--action-list-height");
+    if (height === "" && amt > 0) {
+        height = `${500 + amt}px`;
+    } else if (height === "" && amt === -100) {
+        height = "500px";
     } else {
-        document.getElementById("expandableList").style.height = `${Math.min(Math.max(parseInt(document.getElementById("expandableList").style.height) + amt, 500), 2000)}px`;
-        curActionsDiv.style.maxHeight = `${Math.min(Math.max(parseInt(curActionsDiv.style.maxHeight) + amt, 457), 1957)}px`;
-        nextActionsDiv.style.maxHeight = `${Math.min(Math.max(parseInt(nextActionsDiv.style.maxHeight) + amt, 457), 1957)}px`;
+        height = `${Math.min(Math.max(parseInt(height) + amt, 500), 2000)}px`;
     }
+    document.documentElement.style.setProperty("--action-list-height", height);
     setScreenSize();
     saveUISettings();
 }
 
 function updateBuffCaps() {
     for (const buff of buffList) {
-        document.getElementById(`buff${buff}Cap`).value = Math.min(parseInt(document.getElementById(`buff${buff}Cap`).value), buffHardCaps[buff]);
-        buffCaps[buff] = parseInt(document.getElementById(`buff${buff}Cap`).value);
+        inputElement(`buff${buff}Cap`).value = String(Math.min(parseInt(inputElement(`buff${buff}Cap`).value), buffHardCaps[buff]));
+        buffCaps[buff] = parseInt(inputElement(`buff${buff}Cap`).value);
     }
 }
 
 function setScreenSize() {
     screenSize = document.body.scrollHeight;
-}
-
-//Attempts at getting divs to stay on screen, but can't figure it out still
-function clampDivs() {
-    let tooltips = Array.from(document.getElementsByClassName("showthis"));
-    let test = document.getElementById("radarStats");
-    console.log(screenSize);
-    tooltips.forEach(tooltip => {
-        var offsets = cumulativeOffset(tooltip);
-        if (offsets.top != 0) console.log("Top: " + offsets.top + ". Height: " + tooltip.clientHeight + ". Total: " + (offsets.top + tooltip.clientHeight) + ". Screensize: " + screenSize);
-        if (offsets.top < 0) console.log("Offscreen - top");
-        if (offsets.top + tooltip.clientHeight > screenSize) tooltip.style.top = -100 + 'px';
-    });
 }
 
 function cumulativeOffset(element) {
